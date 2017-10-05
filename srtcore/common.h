@@ -162,10 +162,6 @@ std::string ConnectStatusStr(EConnectStatus est);
 
 
 const int64_t BW_INFINITE =  30000000/8;         //Infinite=> 30Mbps
-const int DEFAULT_LIVE_LATENCY = 120; // (mSec)
-
-const size_t DEFAULT_MPEG_UNIT_SIZE = 188;
-const size_t DEFAULT_LIVE_PAYLOAD_SIZE = 7*DEFAULT_MPEG_UNIT_SIZE; // 1316
 
 
 enum ETransmissionEvent
@@ -481,9 +477,14 @@ public:
 
    static void triggerEvent();
 
-      /// wait for an event to br triggered by "triggerEvent".
+   enum EWait {WT_EVENT, WT_ERROR, WT_TIMEOUT};
 
-   static void waitForEvent();
+      /// wait for an event to br triggered by "triggerEvent".
+      /// @retval WT_EVENT The event has happened
+      /// @retval WT_TIMEOUT The event hasn't happened, the function exited due to timeout
+      /// @retval WT_ERROR The function has exit due to an error
+
+   static EWait waitForEvent();
 
       /// sleep for a short interval. exact sleep time does not matter
 
@@ -638,8 +639,8 @@ public:
 struct CIPAddress
 {
    static bool ipcmp(const struct sockaddr* addr1, const struct sockaddr* addr2, int ver = AF_INET);
-   static void ntop(const struct sockaddr* addr, uint32_t ip[4], int ver = AF_INET);
-   static void pton(struct sockaddr* addr, const uint32_t ip[4], int ver = AF_INET);
+   static void ntop(const struct sockaddr_any& addr, uint32_t ip[4]);
+   static void pton(ref_t<sockaddr_any> addr, const uint32_t ip[4], int sa_family);
    static std::string show(const struct sockaddr* adr);
 };
 

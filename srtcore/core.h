@@ -113,13 +113,16 @@ enum AckDataItem
     ACKD_BUFFERLEFT = 3,
     ACKD_TOTAL_SIZE_SMALL = 4,
 
-    // Extra stats for SRT
+    // Extra fields existing in UDT (not always sent)
+
     ACKD_RCVSPEED = 4,   // length would be 16
     ACKD_BANDWIDTH = 5,
     ACKD_TOTAL_SIZE_UDTBASE = 6, // length = 24
+    // Extra stats for SRT
+
     ACKD_RCVRATE = 6,
     ACKD_TOTAL_SIZE_VER101 = 7, // length = 28
-    ACKD_XMRATE = 7, // XXX This is a weird compat stuff. Version 1.1.3 defines it as ACKD_BANDWIDTH*m_zMaxSRTPayloadSize when set. Never got.
+    ACKD_XMRATE = 7, // XXX This is a weird compat stuff. Version 1.1.3 defines it as ACKD_BANDWIDTH*m_iMaxSRTPayloadSize when set. Never got.
                      // XXX NOTE: field number 7 may be used for something in future, need to confirm destruction of all !compat 1.0.2 version
 
     ACKD_TOTAL_SIZE_VER102 = 8, // 32
@@ -169,9 +172,10 @@ private: // constructor and desctructor
     ~CUDT();
 
 public: //API
+
     static int startup();
     static int cleanup();
-    static SRTSOCKET socket(int af, int type = SOCK_STREAM, int protocol = 0);
+    static SRTSOCKET socket();
     static int bind(SRTSOCKET u, const sockaddr* name, int namelen);
     static int bind(SRTSOCKET u, UDPSOCKET udpsock);
     static int listen(SRTSOCKET u, int backlog);
@@ -184,15 +188,12 @@ public: //API
     static int setsockopt(SRTSOCKET u, int level, SRT_SOCKOPT optname, const void* optval, int optlen);
     static int send(SRTSOCKET u, const char* buf, int len, int flags);
     static int recv(SRTSOCKET u, char* buf, int len, int flags);
-#ifdef SRT_ENABLE_SRCTIMESTAMP
     static int sendmsg(SRTSOCKET u, const char* buf, int len, int ttl = -1, bool inorder = false, uint64_t srctime = 0LL);
     static int recvmsg(SRTSOCKET u, char* buf, int len, uint64_t& srctime);
-#else
-    static int sendmsg(SRTSOCKET u, const char* buf, int len, int ttl = -1, bool inorder = false);
-#endif
-    static int recvmsg(SRTSOCKET u, char* buf, int len);
-    static int64_t sendfile(SRTSOCKET u, std::fstream& ifs, int64_t& offset, int64_t size, int block = 364000);
-    static int64_t recvfile(SRTSOCKET u, std::fstream& ofs, int64_t& offset, int64_t size, int block = 7280000);
+    static int sendmsg2(SRTSOCKET u, const char* buf, int len, SRT_MSGCTRL* mctrl);
+    static int recvmsg2(SRTSOCKET u, char* buf, int len, SRT_MSGCTRL* mctrl);
+    static int64_t sendfile(SRTSOCKET u, std::fstream& ifs, int64_t& offset, int64_t size, int block = SRT_DEFAULT_SENDFILE_BLOCK);
+    static int64_t recvfile(SRTSOCKET u, std::fstream& ofs, int64_t& offset, int64_t size, int block = SRT_DEFAULT_RECVFILE_BLOCK);
     static int select(int nfds, ud_set* readfds, ud_set* writefds, ud_set* exceptfds, const timeval* timeout);
     static int selectEx(const std::vector<SRTSOCKET>& fds, std::vector<SRTSOCKET>* readfds, std::vector<SRTSOCKET>* writefds, std::vector<SRTSOCKET>* exceptfds, int64_t msTimeOut);
     static int epoll_create();
@@ -211,6 +212,18 @@ public: //API
     static bool setstreamid(SRTSOCKET u, const std::string& sid);
     static std::string getstreamid(SRTSOCKET u);
     static int getsndbuffer(SRTSOCKET u, size_t* blocks, size_t* bytes);
+
+    static int setError(const CUDTException& e)
+    {
+        s_UDTUnited.setError(new CUDTException(e));
+        return SRT_ERROR;
+    }
+
+    static int setError(CodeMajor mj, CodeMinor mn, int syserr)
+    {
+        s_UDTUnited.setError(new CUDTException(mj, mn, syserr));
+        return SRT_ERROR;
+    }
 
 public: // internal API
     static const SRTSOCKET INVALID_SOCK = -1;         // invalid socket descriptor
@@ -263,9 +276,10 @@ public: // internal API
     int bandwidth() { return m_iBandwidth; }
     int64_t maxBandwidth() { return m_llMaxBW; }
     int MSS() { return m_iMSS; }
-    size_t maxPayloadSize() { return m_zMaxSRTPayloadSize; }
+    size_t maxPayloadSize() { return m_iMaxSRTPayloadSize; }
     size_t OPT_PayloadSize() { return m_zOPT_ExpPayloadSize; }
     uint64_t minNAKInterval() { return m_ullMinNakInt_tk; }
+    int32_t ISN() { return m_iISN; }
 
     // XXX See CUDT::tsbpd() to see how to implement it. This should
     // do the same as TLPKTDROP feature when skipping packets that are agreed
@@ -290,7 +304,7 @@ private:
     /// Connect to a UDT entity listening at address "peer".
     /// @param peer [in] The address of the listening UDT entity.
 
-    void startConnect(const sockaddr* peer, int32_t forced_isn);
+    void startConnect(const sockaddr_any& peer, int32_t forced_isn);
 
     /// Process the response handshake packet. Failure reasons can be:
     /// * Socket is not in connecting state
@@ -313,12 +327,12 @@ private:
     // - RETURNED VALUE: if true, it means a URQ_CONCLUSION message was received with HSRSP/KMRSP extensions and needs HSRSP/KMRSP.
     bool rendezvousSwitchState(ref_t<UDTRequestType> rsptype, ref_t<bool> needs_extension);
     void cookieContest();
-    EConnectStatus processRendezvous(ref_t<CPacket> reqpkt, const CPacket &response, const sockaddr* serv_addr, bool synchro);
+    EConnectStatus processRendezvous(ref_t<CPacket> reqpkt, const CPacket &response, const sockaddr_any& serv_addr, bool synchro);
     bool prepareConnectionObjects(const CHandShake &hs, HandshakeSide hsd, CUDTException *eout);
     EConnectStatus postConnect(const CPacket& response, bool rendezvous, CUDTException* eout, bool synchro);
     void applyResponseSettings();
     EConnectStatus processAsyncConnectResponse(const CPacket& pkt) ATR_NOEXCEPT;
-    bool processAsyncConnectRequest(EConnectStatus cst, const CPacket& response, const sockaddr* serv_addr);
+    bool processAsyncConnectRequest(EConnectStatus cst, const CPacket& response, const sockaddr_any& serv_addr);
 
 
     size_t fillSrtHandshake_HSREQ(uint32_t* srtdata, size_t srtlen, int hs_version);
@@ -340,11 +354,13 @@ private:
     void updateSrtRcvSettings();
     void updateSrtSndSettings();
 
+    void checkNeedDrop(ref_t<bool> bCongestion);
+
     /// Connect to a UDT entity listening at address "peer", which has sent "hs" request.
     /// @param peer [in] The address of the listening UDT entity.
     /// @param hs [in/out] The handshake information sent by the peer side (in), negotiated value (out).
 
-    void acceptAndRespond(const sockaddr* peer, CHandShake* hs, const CPacket& hspkt);
+    void acceptAndRespond(const sockaddr_any& peer, CHandShake* hs, const CPacket& hspkt);
 
     /// Close the opened UDT entity.
 
@@ -355,7 +371,10 @@ private:
     /// @param len [in] The size of the data block.
     /// @return Actual size of data sent.
 
-    int send(const char* data, int len);
+    int send(const char* data, int len)
+    {
+        return sendmsg(data, len, -1, false, 0);
+    }
 
     /// Request UDT to receive data to a memory block "data" with size of "len".
     /// @param data [out] data received.
@@ -372,20 +391,20 @@ private:
     /// @param srctime [in] Time when the data were ready to send.
     /// @return Actual size of data sent.
 
-#ifdef SRT_ENABLE_SRCTIMESTAMP
     int sendmsg(const char* data, int len, int ttl, bool inorder, uint64_t srctime);
-#else
-    int sendmsg(const char* data, int len, int ttl, bool inorder);
-#endif
     /// Receive a message to buffer "data".
     /// @param data [out] data received.
     /// @param len [in] size of the buffer.
     /// @return Actual size of data received.
 
-#ifdef SRT_ENABLE_SRCTIMESTAMP
+    int sendmsg2(const char* data, int len, SRT_MSGCTRL* m);
+
     int recvmsg(char* data, int len, uint64_t& srctime);
-#endif
-    int recvmsg(char* data, int len);
+
+    int recvmsg2(char* data, int len, SRT_MSGCTRL* m);
+
+    int receiveMessage(char* data, int len, SRT_MSGCTRL* m);
+    int receiveBuffer(char* data, int len);
 
     /// Request UDT to send out a file described as "fd", starting from "offset", with size of "size".
     /// @param ifs [in] The input file stream.
@@ -464,8 +483,14 @@ private:
 
     int sndSpaceLeft()
     {
-        return ((m_iSndBufSize - m_pSndBuffer->getCurrBufSize()) * m_zMaxSRTPayloadSize);
+        return sndBuffersLeft() * m_iMaxSRTPayloadSize;
     }
+
+    int sndBuffersLeft()
+    {
+        return m_iSndBufSize - m_pSndBuffer->getCurrBufSize();
+    }
+
 
     // TSBPD thread main function.
     static void* tsbpd(void* param);
@@ -481,7 +506,7 @@ private: // Identification
     UDTSockType m_iSockType;                     // Type of the UDT connection (SOCK_STREAM or SOCK_DGRAM)
     SRTSOCKET m_PeerID;                          // peer id, for multiplexer
 
-    size_t m_zMaxSRTPayloadSize;                 // Maximum/regular payload size, in bytes
+    int m_iMaxSRTPayloadSize;                 // Maximum/regular payload size, in bytes
     size_t m_zOPT_ExpPayloadSize;                    // Expected average payload size (user option)
 
     // Options
@@ -494,7 +519,7 @@ private: // Identification
     linger m_Linger;                             // Linger information on close
     int m_iUDPSndBufSize;                        // UDP sending buffer size
     int m_iUDPRcvBufSize;                        // UDP receiving buffer size
-    int m_iIPversion;                            // IP version
+    //int m_iIPversion;                            // IP version
     bool m_bRendezvous;                          // Rendezvous connection mode
 #ifdef SRT_ENABLE_CONNTIMEO
     int m_iConnTimeOut;                          // connect timeout in milliseconds
@@ -563,16 +588,6 @@ private:
     int m_iRTTVar;                               // RTT variance
     int m_iDeliveryRate;                         // Packet arrival rate at the receiver side
     int m_iByteDeliveryRate;                     // Byte arrival rate at the receiver side
-
-    int sevenEight(int oldvalue, int newvalue)
-    {
-        return (oldvalue*7 + newvalue) >> 3;
-    }
-
-    int threeFour(int oldvalue, int newvalue)
-    {
-        return (oldvalue*3 + newvalue) >> 2;
-    }
 
     uint64_t m_ullLingerExpiration;              // Linger expiration time (for GC to close a socket with data in sending buffer)
 
@@ -663,13 +678,6 @@ private: // synchronization: mutexes and conditions
 
     pthread_mutex_t m_RcvLossLock;               // Protects the receiver loss list (access: CRcvQueue::worker, CUDT::tsbpd)
 
-    // This is required to synchronize the background part of the closing socket process
-    // with the call of srt_close(). The condition is broadcast at the end regardless of
-    // the settings. The srt_close() function is blocked from exiting until this signal
-    // is received when the socket is set SRTO_SNDSYN.
-    pthread_mutex_t m_CloseSynchLock;
-    pthread_cond_t m_CloseSynchCond;
-
     void initSynch();
     void destroySynch();
     void releaseSynch();
@@ -682,11 +690,11 @@ private: // Common connection Congestion Control setup
 private: // Generation and processing of packets
     void sendCtrl(UDTMessageType pkttype, void* lparam = NULL, void* rparam = NULL, int size = 0);
     void processCtrl(CPacket& ctrlpkt);
-    int packData(CPacket& packet, uint64_t& ts);
+    int packData(ref_t<CPacket> packet, ref_t<uint64_t> ts_tk);
     int processData(CUnit* unit);
-    int processConnectRequest(const sockaddr* addr, CPacket& packet);
+    int processConnectRequest(const sockaddr_any& addr, CPacket& packet);
     static void addLossRecord(std::vector<int32_t>& lossrecord, int32_t lo, int32_t hi);
-    int32_t bake(const sockaddr* addr, int32_t previous_cookie = 0, int correction = 0);
+    int32_t bake(const sockaddr_any& addr, int32_t previous_cookie = 0, int correction = 0);
 
 private: // Trace
     uint64_t m_StartTime;                        // timestamp when the UDT entity is started
@@ -740,7 +748,7 @@ private: // Trace
 
 public:
 
-    static const int m_iSelfClockInterval = 64;  // ACK interval for self-clocking
+    static const int SELF_CLOCK_INTERVAL = 64;  // ACK interval for self-clocking
     static const int SEND_LITE_ACK = sizeof(int32_t); // special size for ack containing only ack seq
     static const int PACKETPAIR_MASK = 0xF;
 
@@ -770,10 +778,10 @@ private: // Timers
 private: // for UDP multiplexer
     CSndQueue* m_pSndQueue;			// packet sending queue
     CRcvQueue* m_pRcvQueue;			// packet receiving queue
-    sockaddr* m_pPeerAddr;			// peer address
+    sockaddr_any m_PeerAddr;        // peer address(es)
     uint32_t m_piSelfIP[4];			// local UDP IP address
     CSNode* m_pSNode;				// node information for UDT list used in snd queue
-    CRNode* m_pRNode;                            // node information for UDT list used in rcv queue
+    CRNode* m_pRNode;               // node information for UDT list used in rcv queue
 
 public: // For smoother
     const CSndQueue* sndQueue() { return m_pSndQueue; }

@@ -82,6 +82,7 @@ modified by
 #include <cmath>
 #include "md5.h"
 #include "common.h"
+#include "netinet_any.h"
 
 #include <srt_compat.h> // SysStrError
 
@@ -269,7 +270,7 @@ void CTimer::triggerEvent()
     pthread_cond_signal(&m_EventCond);
 }
 
-void CTimer::waitForEvent()
+CTimer::EWait CTimer::waitForEvent()
 {
     timeval now;
     timespec timeout;
@@ -285,8 +286,10 @@ void CTimer::waitForEvent()
         timeout.tv_nsec = (now.tv_usec + 10000 - 1000000) * 1000;
     }
     pthread_mutex_lock(&m_EventLock);
-    pthread_cond_timedwait(&m_EventCond, &m_EventLock, &timeout);
+    int reason = pthread_cond_timedwait(&m_EventCond, &m_EventLock, &timeout);
     pthread_mutex_unlock(&m_EventLock);
+
+    return reason == ETIMEDOUT ? WT_TIMEOUT : reason == 0 ? WT_EVENT : WT_ERROR;
 }
 
 void CTimer::sleep()
@@ -638,33 +641,32 @@ bool CIPAddress::ipcmp(const sockaddr* addr1, const sockaddr* addr2, int ver)
    return false;
 }
 
-void CIPAddress::ntop(const sockaddr* addr, uint32_t ip[4], int ver)
+void CIPAddress::ntop(const sockaddr_any& addr, uint32_t ip[4])
 {
-   if (AF_INET == ver)
-   {
-      sockaddr_in* a = (sockaddr_in*)addr;
-      ip[0] = a->sin_addr.s_addr;
-   }
-   else
-   {
-      sockaddr_in6* a = (sockaddr_in6*)addr;
+    if (addr.family() == AF_INET)
+    {
+        ip[0] = addr.sin.sin_addr.s_addr;
+    }
+    else
+    {
+      const sockaddr_in6* a = &addr.sin6;
       ip[3] = (a->sin6_addr.s6_addr[15] << 24) + (a->sin6_addr.s6_addr[14] << 16) + (a->sin6_addr.s6_addr[13] << 8) + a->sin6_addr.s6_addr[12];
       ip[2] = (a->sin6_addr.s6_addr[11] << 24) + (a->sin6_addr.s6_addr[10] << 16) + (a->sin6_addr.s6_addr[9] << 8) + a->sin6_addr.s6_addr[8];
       ip[1] = (a->sin6_addr.s6_addr[7] << 24) + (a->sin6_addr.s6_addr[6] << 16) + (a->sin6_addr.s6_addr[5] << 8) + a->sin6_addr.s6_addr[4];
       ip[0] = (a->sin6_addr.s6_addr[3] << 24) + (a->sin6_addr.s6_addr[2] << 16) + (a->sin6_addr.s6_addr[1] << 8) + a->sin6_addr.s6_addr[0];
-   }
+    }
 }
 
-void CIPAddress::pton(sockaddr* addr, const uint32_t ip[4], int ver)
+void CIPAddress::pton(ref_t<sockaddr_any> addr, const uint32_t ip[4], int ver)
 {
    if (AF_INET == ver)
    {
-      sockaddr_in* a = (sockaddr_in*)addr;
+      sockaddr_in* a = &addr.get().sin;
       a->sin_addr.s_addr = ip[0];
    }
    else
    {
-      sockaddr_in6* a = (sockaddr_in6*)addr;
+      sockaddr_in6* a = &addr.get().sin6;
       for (int i = 0; i < 4; ++ i)
       {
          a->sin6_addr.s6_addr[i * 4] = ip[i] & 0xFF;

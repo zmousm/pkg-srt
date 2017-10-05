@@ -68,6 +68,7 @@ written by
 
 #include "platform_sys.h"
 
+#include <cstdio>
 #include <string>
 #include <algorithm>
 #include <bitset>
@@ -256,6 +257,9 @@ struct ref_t: public std::reference_wrapper<T>
     {
         this->get() = i;
     }
+
+    T operator->() const
+    { return this->get(); }
 };
 
 // This alias was created so that 'Ref' (not 'ref') is used everywhere.
@@ -344,11 +348,20 @@ class ref_t
 {
     Type* m_data;
 
+    // Use your own addressof to walk around any
+    // defined operator&.
+    template <class InType>
+    static InType* adrof(InType& refr)
+    {
+        unsigned char& mem = (unsigned char&)refr;
+        return (InType*)&mem;
+    }
+
 public:
     typedef Type type;
 
     explicit ref_t(Type& __indata)
-        : m_data(&__indata)
+        : m_data(adrof(__indata))
         { }
 
     ref_t(const ref_t<Type>& inref)
@@ -369,6 +382,9 @@ public:
     { return this->get(); }
 
     Type& get() const 
+    { return *m_data; }
+
+    Type operator->() const
     { return *m_data; }
 };
 
@@ -608,5 +624,11 @@ inline size_t safe_advance(It& it, size_t num, It end)
 // This is available only in C++17, dunno why not C++11 as it's pretty useful.
 template <class V, size_t N> inline
 ATR_CONSTEXPR size_t Size(const V (&)[N]) ATR_NOEXCEPT { return N; }
+
+template <size_t DEPRLEN, typename ValueType>
+inline ValueType avg_iir(ValueType old_value, ValueType new_value)
+{
+    return (old_value*(DEPRLEN-1) + new_value)/DEPRLEN;
+}
 
 #endif
