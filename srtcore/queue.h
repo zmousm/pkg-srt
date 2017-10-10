@@ -313,21 +313,21 @@ public:
    ~CRendezvousQueue();
 
 public:
-   void insert(const UDTSOCKET& id, CUDT* u, const sockaddr_any& addr, uint64_t ttl);
+   void insert(const SRTSOCKET& id, CUDT* u, const sockaddr_any& addr, uint64_t ttl);
 
    // The should_lock parameter is given here to state as to whether
    // the lock should be applied here. If called from some internals
    // and the lock IS ALREADY APPLIED, use false here to prevent
    // double locking and deadlock in result.
-   void remove(const UDTSOCKET& id, bool should_lock);
-   CUDT* retrieve(const sockaddr_any& addr, ref_t<UDTSOCKET> id);
+   void remove(const SRTSOCKET& id, bool should_lock);
+   CUDT* retrieve(const sockaddr_any& addr, ref_t<SRTSOCKET> id);
 
    void updateConnStatus(EConnectStatus, const CPacket& response);
 
 private:
    struct CRL
    {
-      UDTSOCKET m_iID;			// UDT socket ID (self)
+      SRTSOCKET m_iID;			// UDT socket ID (self)
       CUDT* m_pUDT;			// UDT instance
       int m_iIPversion;                 // IP version
       sockaddr_any m_PeerAddr;		// UDT sonnection peer address
@@ -478,8 +478,8 @@ private:
    int setListener(CUDT* u);
    void removeListener(const CUDT* u);
 
-   void registerConnector(const UDTSOCKET& id, CUDT* u, const sockaddr_any& addr, uint64_t ttl);
-   void removeConnector(const UDTSOCKET& id, bool should_lock = true);
+   void registerConnector(const SRTSOCKET& id, CUDT* u, const sockaddr_any& addr, uint64_t ttl);
+   void removeConnector(const SRTSOCKET& id, bool should_lock = true);
 
    void setNewEntry(CUDT* u);
    bool ifNewEntry();

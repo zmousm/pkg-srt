@@ -831,7 +831,7 @@ void CRendezvousQueue::insert(const UDTSOCKET& id, CUDT* u, const sockaddr_any& 
    m_lRendezvousID.push_back(r);
 }
 
-void CRendezvousQueue::remove(const UDTSOCKET& id, bool should_lock)
+void CRendezvousQueue::remove(const SRTSOCKET& id, bool should_lock)
 {
    CGuard vg(m_RIDVectorLock, should_lock);
 
@@ -845,10 +845,10 @@ void CRendezvousQueue::remove(const UDTSOCKET& id, bool should_lock)
    }
 }
 
-CUDT* CRendezvousQueue::retrieve(const sockaddr_any& addr, ref_t<UDTSOCKET> r_id)
+CUDT* CRendezvousQueue::retrieve(const sockaddr_any& addr, ref_t<SRTSOCKET> r_id)
 {
     CGuard vg(m_RIDVectorLock);
-    UDTSOCKET& id = r_id;
+   SRTSOCKET& id = r_id;
 
     // TODO: optimize search
     for (list<CRL>::iterator i = m_lRendezvousID.begin(); i != m_lRendezvousID.end(); ++ i)
@@ -1431,12 +1431,12 @@ void CRcvQueue::removeListener(const CUDT* u)
       m_pListener = NULL;
 }
 
-void CRcvQueue::registerConnector(const UDTSOCKET& id, CUDT* u, const sockaddr_any& addr, uint64_t ttl)
+void CRcvQueue::registerConnector(const SRTSOCKET& id, CUDT* u, const sockaddr_any& addr, uint64_t ttl)
 {
    m_pRendezvousQueue->insert(id, u, addr, ttl);
 }
 
-void CRcvQueue::removeConnector(const UDTSOCKET& id, bool should_lock)
+void CRcvQueue::removeConnector(const SRTSOCKET& id, bool should_lock)
 {
     LOGC(mglog.Debug) << "removeConnector: removing %" << id;
     m_pRendezvousQueue->remove(id, should_lock);

@@ -153,7 +153,8 @@ private:
         // The m_iSndAvgPayloadSize field is however left unguarded because as
         // 'int' type it's considered atomic, as well as there's no other modifier
         // of this field. Worst case scenario, the procedure running in CRcvQueue::worker
-        // thread will pick up a "slightly outdated" value from this field.
+        // thread will pick up a "slightly outdated" average value from this
+        // field - this is insignificant.
         m_iSndAvgPayloadSize = avg_iir<128, int>(m_iSndAvgPayloadSize, packet.getLength());
         LOGC(mglog.Debug) << "LiveSmoother: avg payload size updated: " << m_iSndAvgPayloadSize;
     }

@@ -115,7 +115,7 @@ logging::Logger rxlog(SRT_LOGFA_REXMIT, &srt_logger_config, "SRT.r");
 
 CUDTUnited CUDT::s_UDTUnited;
 
-const UDTSOCKET UDT::INVALID_SOCK = CUDT::INVALID_SOCK;
+const SRTSOCKET UDT::INVALID_SOCK = CUDT::INVALID_SOCK;
 const int UDT::ERROR = CUDT::ERROR;
 
 // SRT Version constants
@@ -1014,7 +1014,7 @@ void CUDT::getOpt(SRT_SOCKOPT optName, void* optval, int& optlen)
    }
 }
 
-bool CUDT::setstreamid(UDTSOCKET u, const std::string& sid)
+bool CUDT::setstreamid(SRTSOCKET u, const std::string& sid)
 {
     CUDT* that = getUDTHandle(u);
     if (!that)
@@ -1030,7 +1030,7 @@ bool CUDT::setstreamid(UDTSOCKET u, const std::string& sid)
     return true;
 }
 
-std::string CUDT::getstreamid(UDTSOCKET u)
+std::string CUDT::getstreamid(SRTSOCKET u)
 {
     CUDT* that = getUDTHandle(u);
     if (!that)
@@ -3683,7 +3683,7 @@ void* CUDT::tsbpd(void* param)
    self->m_bTsbPdAckWakeup = true;
    while (!self->m_bClosing)
    {
-      CPacket* rdpkt = 0;
+      int32_t current_pkt_seq = 0;
       uint64_t tsbpdtime = 0;
       bool rxready = false;
 
@@ -3698,7 +3698,7 @@ void* CUDT::tsbpd(void* param)
           int32_t skiptoseqno = -1;
           bool passack = true; //Get next packet to wait for even if not acked
 
-          rxready = self->m_pRcvBuffer->getRcvFirstMsg(Ref(tsbpdtime), Ref(passack), Ref(skiptoseqno), &rdpkt);
+          rxready = self->m_pRcvBuffer->getRcvFirstMsg(Ref(tsbpdtime), Ref(passack), Ref(skiptoseqno), Ref(current_pkt_seq));
           /*
            * VALUES RETURNED:
            *
@@ -3756,16 +3756,15 @@ void* CUDT::tsbpd(void* param)
       }
       else
       {
-          rxready = self->m_pRcvBuffer->isRcvDataReady(tsbpdtime, &rdpkt);
+          rxready = self->m_pRcvBuffer->isRcvDataReady(Ref(tsbpdtime), Ref(current_pkt_seq));
       }
       CGuard::leaveCS(self->m_AckLock);
 
       if (rxready)
       {
-          int seq=0;
-          if ( rdpkt )
-              seq = rdpkt->getSeqNo();
-          LOGC(tslog.Debug) << self->CONID() << "tsbpd: PLAYING PACKET seq=" << seq << " (belated " << ((CTimer::getTime() - tsbpdtime)/1000.0) << "ms)";
+          int seq = current_pkt_seq;
+          LOGC(tslog.Debug) << self->CONID() << "tsbpd: PLAYING PACKET seq=" << seq
+              << " (belated " << ((CTimer::getTime() - tsbpdtime)/1000.0) << "ms)";
          /*
          * There are packets ready to be delivered
          * signal a waiting "recv" call if there is any data available
@@ -3792,11 +3791,10 @@ void* CUDT::tsbpd(void* param)
           timespec locktime;
           locktime.tv_sec = tsbpdtime / 1000000;
           locktime.tv_nsec = (tsbpdtime % 1000000) * 1000;
-          int seq = 0;
-          if ( rdpkt )
-              seq = rdpkt->getSeqNo();
+          int seq = current_pkt_seq;
           uint64_t now = CTimer::getTime();
-          LOGC(tslog.Debug) << self->CONID() << "tsbpd: FUTURE PACKET seq=" << seq << " T=" << logging::FormatTime(tsbpdtime) << " - waiting " << ((tsbpdtime - now)/1000.0) << "ms";
+          LOGC(tslog.Debug) << self->CONID() << "tsbpd: FUTURE PACKET seq=" << seq
+              << " T=" << logging::FormatTime(tsbpdtime) << " - waiting " << ((tsbpdtime - now)/1000.0) << "ms";
           pthread_cond_timedwait(&self->m_RcvTsbPdCond, &self->m_RecvLock, &locktime);
           THREAD_RESUMED();
       }
@@ -7847,6 +7845,9 @@ void CUDT::checkTimers()
 
             return;
         }
+
+        LOGC(mglog.Debug) << "EXP TIMER: count=" << m_iEXPCount << "/" << (+COMM_RESPONSE_MAX_EXP)
+            << " elapsed=" << ((currtime_tk - m_ullLastRspTime_tk)*m_ullCPUFrequency) << "/" << (+COMM_RESPONSE_TIMEOUT_US) << "us";
 
         /* 
          * This part is only used with FileSmoother. This retransmits
