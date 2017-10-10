@@ -176,8 +176,12 @@ public: //API
     static int startup();
     static int cleanup();
     static SRTSOCKET socket();
+    static SRTSOCKET createGroup();
+    static int addSocketToGroup(SRTSOCKET socket, SRTSOCKET group);
+    static int removeSocketFromGroup(SRTSOCKET socket);
+    static int getGroupOfSocket(SRTSOCKET socket);
     static int bind(SRTSOCKET u, const sockaddr* name, int namelen);
-    static int bind(SRTSOCKET u, UDPSOCKET udpsock);
+    static int bind(SRTSOCKET u, int udpsock);
     static int listen(SRTSOCKET u, int backlog);
     static SRTSOCKET accept(SRTSOCKET u, sockaddr* addr, int* addrlen);
     static int connect(SRTSOCKET u, const sockaddr* name, int namelen, int32_t forced_isn);

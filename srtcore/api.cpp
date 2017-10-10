@@ -81,11 +81,14 @@ extern logging::LogConfig srt_logger_config;
 
 extern logging::Logger mglog;
 
+CUDTGroup CUDTSocket::s_DefaultGroup;
+
 CUDTSocket::CUDTSocket():
 m_Status(SRTS_INIT),
 m_TimeStamp(0),
 m_SocketID(0),
 m_ListenSocket(0),
+m_IncludedGroup(),
 m_PeerID(0),
 m_iISN(0),
 m_pUDT(NULL),
@@ -96,9 +99,10 @@ m_AcceptLock(),
 m_uiBackLog(0),
 m_iMuxID(-1)
 {
-      pthread_mutex_init(&m_AcceptLock, NULL);
-      pthread_cond_init(&m_AcceptCond, NULL);
-      pthread_mutex_init(&m_ControlLock, NULL);
+    m_IncludedIter = s_DefaultGroup.m_Group.end();
+    pthread_mutex_init(&m_AcceptLock, NULL);
+    pthread_cond_init(&m_AcceptCond, NULL);
+    pthread_mutex_init(&m_ControlLock, NULL);
 }
 
 CUDTSocket::~CUDTSocket()
@@ -332,9 +336,10 @@ SRTSOCKET CUDTUnited::newSocket()
       throw CUDTException(MJ_SYSTEMRES, MN_MEMORY, 0);
    }
 
-   CGuard::enterCS(m_IDLock);
-   ns->m_SocketID = generateSocketID();
-   CGuard::leaveCS(m_IDLock);
+   {
+       CGuard guard(m_IDLock);
+       ns->m_SocketID = generateSocketID();
+   }
 
    ns->m_Status = SRTS_INIT;
    ns->m_ListenSocket = 0;
@@ -613,7 +618,7 @@ int CUDTUnited::bind(const SRTSOCKET u, const sockaddr_any& name)
    return 0;
 }
 
-int CUDTUnited::bind(SRTSOCKET u, UDPSOCKET udpsock)
+int CUDTUnited::bind(SRTSOCKET u, int udpsock)
 {
    CUDTSocket* s = locateSocket(u);
    if (!s)
@@ -806,76 +811,102 @@ SRTSOCKET CUDTUnited::accept(const SRTSOCKET listen, sockaddr* addr, int* addrle
    return u;
 }
 
+int CUDTUnited::groupConnect(CUDTGroup* g, const sockaddr_any& target_addr)
+{
+
+    return -1;
+}
+
 int CUDTUnited::connect(const SRTSOCKET u, const sockaddr* name, int namelen, int32_t forced_isn)
 {
-   CUDTSocket* s = locateSocket(u);
-   if (!s)
-      throw CUDTException(MJ_NOTSUP, MN_SIDINVAL, 0);
+    // Check affiliation of the socket. It's now allowed for it to be
+    // a group or socket. For a group, add automatically a socket to
+    // the group.
+    if (u & SRTSOCKET_GROUP::mask)
+    {
+        CUDTGroup* g = locateGroup(u);
+        if (!g)
+            throw CUDTException(MJ_NOTSUP, MN_SIDINVAL, 0);
 
-   // sockaddr_any will get length zero if the parameters check failed
-   sockaddr_any target_addr(name, namelen);
-   if (target_addr.len == 0)
-       throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
+        sockaddr_any target_addr(name, namelen);
+        if (target_addr.len == 0)
+            throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
 
-   CGuard cg(s->m_ControlLock);
+        // Note: forced_isn is ignored when connecting a group.
+        // The group manages the ISN by itself ALWAYS, that is,
+        // it's generated anew for the very first socket, and then
+        // derived by all sockets in the group.
+        return groupConnect(g, target_addr);
+    }
 
-   // a socket can "connect" only if it is in the following states:
-   // - OPENED: assume the socket binding parameters are configured
-   // - INIT: configure binding parameters here
-   // - any other (meaning, already connected): report error
+    CUDTSocket* s = locateSocket(u);
+    if (!s)
+        throw CUDTException(MJ_NOTSUP, MN_SIDINVAL, 0);
 
-   if (s->m_Status == SRTS_INIT)
-   {
-      if (s->m_pUDT->m_bRendezvous)
-         throw CUDTException(MJ_NOTSUP, MN_ISRENDUNBOUND, 0);
+    // sockaddr_any will get length zero if the parameters check failed
+    sockaddr_any target_addr(name, namelen);
+    if (target_addr.len == 0)
+        throw CUDTException(MJ_NOTSUP, MN_INVAL, 0);
 
-      // If bind() was done first on this socket, then the
-      // socket will not perform this step. This actually does the
-      // same thing as bind() does, just with empty address so that
-      // the binding parameters are autoselected.
+    CGuard cg(s->m_ControlLock);
 
-      s->m_pUDT->open();
-      sockaddr_any autoselect_sa (name->sa_family);
-      // This will create such a sockaddr_any that
-      // will return true from empty(). 
-      updateMux(s, autoselect_sa);  // <<---- updateMux
-                                    // -> C(Snd|Rcv)Queue::init
-                                    // -> pthread_create(...C(Snd|Rcv)Queue::worker...)
-      s->m_Status = SRTS_OPENED;
-   }
-   else if (s->m_Status != SRTS_OPENED)
-      throw CUDTException(MJ_NOTSUP, MN_ISCONNECTED, 0);
+    // a socket can "connect" only if it is in the following states:
+    // - OPENED: assume the socket binding parameters are configured
+    // - INIT: configure binding parameters here
+    // - any other (meaning, already connected): report error
 
-   // connect_complete() may be called before connect() returns.
-   // So we need to update the status before connect() is called,
-   // otherwise the status may be overwritten with wrong value
-   // (CONNECTED vs. CONNECTING).
-   s->m_Status = SRTS_CONNECTING;
+    if (s->m_Status == SRTS_INIT)
+    {
+        if (s->m_pUDT->m_bRendezvous)
+            throw CUDTException(MJ_NOTSUP, MN_ISRENDUNBOUND, 0);
 
-   /* 
-   * In blocking mode, connect can block for up to 30 seconds for
-   * rendez-vous mode. Holding the s->m_ControlLock prevent close
-   * from cancelling the connect
-   */
-   try
-   {
-       // InvertedGuard unlocks in the constructor, then locks in the
-       // destructor, no matter if an exception has fired.
-       InvertedGuard l_unlocker( s->m_pUDT->m_bSynRecving ? &s->m_ControlLock : 0 );
-       s->m_pUDT->startConnect(target_addr, forced_isn);
-   }
-   catch (CUDTException& e) // Interceptor, just to change the state.
-   {
-      s->m_Status = SRTS_OPENED;
-      throw e;
-   }
+        // If bind() was done first on this socket, then the
+        // socket will not perform this step. This actually does the
+        // same thing as bind() does, just with empty address so that
+        // the binding parameters are autoselected.
 
-   // record peer address
-   s->m_PeerAddr = target_addr;
+        s->m_pUDT->open();
+        sockaddr_any autoselect_sa (name->sa_family);
+        // This will create such a sockaddr_any that
+        // will return true from empty(). 
+        updateMux(s, autoselect_sa);  // <<---- updateMux
+        // -> C(Snd|Rcv)Queue::init
+        // -> pthread_create(...C(Snd|Rcv)Queue::worker...)
+        s->m_Status = SRTS_OPENED;
+    }
+    else if (s->m_Status != SRTS_OPENED)
+        throw CUDTException(MJ_NOTSUP, MN_ISCONNECTED, 0);
 
-   // CGuard destructor will delete cg and unlock s->m_ControlLock
+    // connect_complete() may be called before connect() returns.
+    // So we need to update the status before connect() is called,
+    // otherwise the status may be overwritten with wrong value
+    // (CONNECTED vs. CONNECTING).
+    s->m_Status = SRTS_CONNECTING;
 
-   return 0;
+    /* 
+     * In blocking mode, connect can block for up to 30 seconds for
+     * rendez-vous mode. Holding the s->m_ControlLock prevent close
+     * from cancelling the connect
+     */
+    try
+    {
+        // InvertedGuard unlocks in the constructor, then locks in the
+        // destructor, no matter if an exception has fired.
+        InvertedGuard l_unlocker( s->m_pUDT->m_bSynRecving ? &s->m_ControlLock : 0 );
+        s->m_pUDT->startConnect(target_addr, forced_isn);
+    }
+    catch (CUDTException& e) // Interceptor, just to change the state.
+    {
+        s->m_Status = SRTS_OPENED;
+        throw e;
+    }
+
+    // record peer address
+    s->m_PeerAddr = target_addr;
+
+    // CGuard destructor will delete cg and unlock s->m_ControlLock
+
+    return 0;
 }
 
 void CUDTUnited::connect_complete(const SRTSOCKET u)
@@ -1391,6 +1422,17 @@ CUDTSocket* CUDTUnited::locateSocket(const SRTSOCKET u)
    return i->second;
 }
 
+CUDTGroup* CUDTUnited::locateGroup(SRTSOCKET u)
+{
+   CGuard cg(m_ControlLock);
+
+   map<SRTSOCKET, CUDTGroup>::iterator i = m_Groups.find(u);
+   if ( i == m_Groups.end() )
+       return NULL;
+
+   return &i->second;
+}
+
 CUDTSocket* CUDTUnited::locatePeer(
    const sockaddr_any& peer,
    const SRTSOCKET id,
@@ -1622,7 +1664,7 @@ CUDTException* CUDTUnited::getError()
 
 
 void CUDTUnited::updateMux(
-   CUDTSocket* s, const sockaddr_any& addr, const UDPSOCKET* udpsock /*[[nullable]]*/)
+   CUDTSocket* s, const sockaddr_any& addr, const int* udpsock /*[[nullable]]*/)
 {
    CGuard cg(m_ControlLock);
 
@@ -1923,6 +1965,117 @@ SRTSOCKET CUDT::socket()
    }
 }
 
+SRTSOCKET CUDT::createGroup()
+{
+    int32_t id = -1;
+    try
+    {
+        {
+            CGuard guard(s_UDTUnited.m_IDLock);
+            id = s_UDTUnited.generateSocketID() | SRTSOCKET_GROUP::mask;
+        }
+
+        // Now map the group
+        s_UDTUnited.addGroup(id).m_GroupID = id;
+        return id;
+    }
+    catch (CUDTException& e)
+    {
+        return setError(e);
+    }
+    catch (std::bad_alloc& e)
+    {
+        return setError(MJ_SYSTEMRES, MN_MEMORY, 0);
+    }
+}
+
+int CUDT::addSocketToGroup(SRTSOCKET socket, SRTSOCKET group)
+{
+    // Check if socket and group have been set correctly.
+    int32_t sid = socket & ~SRTSOCKET_GROUP::mask;
+    int32_t gm = group & SRTSOCKET_GROUP::mask;
+
+    if ( sid != socket || gm == 0 )
+        return setError(MJ_NOTSUP, MN_INVAL, 0);
+
+    // Find the socket and the group
+    CUDTSocket* s = s_UDTUnited.locateSocket(socket);
+    CUDTGroup* g = s_UDTUnited.locateGroup(group);
+
+    if (!s || !g)
+        return setError(MJ_NOTSUP, MN_INVAL, 0);
+
+    if (g->m_selfManaged)
+    {
+        // This can be changed as long as the group is empty.
+        if (!g->m_Group.empty())
+        {
+            return setError(MJ_NOTSUP, MN_INVAL, 0);
+        }
+        g->m_selfManaged = false;
+    }
+
+    CGuard cg(s->m_ControlLock);
+
+    typedef list<SRTSOCKET>::iterator li_t;
+
+    // Check if a socket already belongs to a group
+    if (s->m_IncludedIter != s->s_DefaultGroup.m_Group.end())
+    {
+        return setError(MJ_NOTSUP, MN_INVAL, 0);
+    }
+
+    // Check if the socket already is in the group
+    li_t f = find(g->m_Group.begin(), g->m_Group.end(), socket);
+    if (f == g->m_Group.end())
+    {
+        // Already in the group; behave as if it was added.
+        return 0;
+    }
+
+    g->m_Group.push_back(socket);
+
+    // Set f to this last exactly added element
+    f = g->m_Group.end();
+    --f;
+
+    // Mark where this is added
+    s->m_IncludedGroup = g;
+    s->m_IncludedIter = f;
+
+    return 0;
+}
+
+int CUDT::removeSocketFromGroup(SRTSOCKET socket)
+{
+    CUDTSocket* s = s_UDTUnited.locateSocket(socket);
+    if (!s)
+        return setError(MJ_NOTSUP, MN_INVAL, 0);
+
+    if (!s->m_IncludedGroup)
+        return setError(MJ_NOTSUP, MN_INVAL, 0);
+
+    CGuard grd(s->m_ControlLock);
+
+    s->m_IncludedGroup->m_Group.erase(s->m_IncludedIter);
+    s->m_IncludedIter = s->s_DefaultGroup.m_Group.end();
+    s->m_IncludedGroup = 0;
+
+    return 0;
+}
+
+int CUDT::getGroupOfSocket(SRTSOCKET socket)
+{
+    CUDTSocket* s = s_UDTUnited.locateSocket(socket);
+    if (!s)
+        return setError(MJ_NOTSUP, MN_INVAL, 0);
+
+    if (!s->m_IncludedGroup)
+        return setError(MJ_NOTSUP, MN_INVAL, 0);
+
+    return s->m_IncludedGroup->m_GroupID;
+}
+
 int CUDT::bind(SRTSOCKET u, const sockaddr* name, int namelen)
 {
    try
@@ -1956,7 +2109,7 @@ int CUDT::bind(SRTSOCKET u, const sockaddr* name, int namelen)
    }
 }
 
-int CUDT::bind(SRTSOCKET u, UDPSOCKET udpsock)
+int CUDT::bind(SRTSOCKET u, int udpsock)
 {
    try
    {
@@ -2772,7 +2925,7 @@ int bind(SRTSOCKET u, const struct sockaddr* name, int namelen)
    return CUDT::bind(u, name, namelen);
 }
 
-int bind2(SRTSOCKET u, UDPSOCKET udpsock)
+int bind2(SRTSOCKET u, int udpsock)
 {
    return CUDT::bind(u, udpsock);
 }

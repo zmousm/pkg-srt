@@ -360,7 +360,7 @@ int CSndBuffer::addBufferFromFile(fstream& ifs, int len)
    return total;
 }
 
-int CSndBuffer::readData(char** data, ref_t<int32_t> msgno_bitset, ref_t<uint64_t> srctime, unsigned kflgs)
+int CSndBuffer::extractDataToSend(char** data, ref_t<int32_t> msgno_bitset, ref_t<uint64_t> srctime, unsigned kflgs)
 {
    // No data to read
    if (m_pCurrBlock == m_pLastBlock)
@@ -407,7 +407,7 @@ int CSndBuffer::readData(char** data, ref_t<int32_t> msgno_bitset, ref_t<uint64_
    return readlen;
 }
 
-int CSndBuffer::readData(char** data, const int offset, ref_t<int32_t> msgno_bitset, ref_t<uint64_t> srctime, ref_t<int> msglen)
+int CSndBuffer::extractDataToSend(char** data, const int offset, ref_t<int32_t> msgno_bitset, ref_t<uint64_t> srctime, ref_t<int> msglen)
 {
    CGuard bufferguard(m_BufLock);
 

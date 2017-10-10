@@ -105,8 +105,6 @@ typedef int SRTSOCKET; // SRTSOCKET is a typedef to int anyway, and it's not eve
    typedef int SYSSOCKET;
 #endif
 
-typedef SYSSOCKET UDPSOCKET;
-
 
 // Values returned by srt_getsockstate()
 typedef enum SRT_SOCKSTATUS {
@@ -502,10 +500,19 @@ SRT_API extern int srt_startup(void);
 SRT_API extern int srt_cleanup(void);
 
 // socket operations
-SRT_API extern SRTSOCKET srt_socket(int af, int type, int protocol);
+// DEPRECATED: srt_socket with 3 arguments. All these arguments are ignored
+// and socket creation doesn't need any arguments. Use srt_create_socket().
+SRT_API extern SRTSOCKET srt_socket(int, int, int) SRT_ATR_DEPRECATED;
 SRT_API extern SRTSOCKET srt_create_socket();
+
+// Group management
+SRT_API extern SRTSOCKET srt_create_group();
+SRT_API extern int srt_include(SRTSOCKET socket, SRTSOCKET group);
+SRT_API extern int srt_exclude(SRTSOCKET socket);
+SRT_API extern SRTSOCKET srt_groupof(SRTSOCKET socket);
+
 SRT_API extern int srt_bind(SRTSOCKET u, const struct sockaddr* name, int namelen);
-SRT_API extern int srt_bind_peerof(SRTSOCKET u, UDPSOCKET udpsock);
+SRT_API extern int srt_bind_peerof(SRTSOCKET u, int sys_udp_sock);
 SRT_API extern int srt_listen(SRTSOCKET u, int backlog);
 SRT_API extern SRTSOCKET srt_accept(SRTSOCKET u, struct sockaddr* addr, int* addrlen);
 SRT_API extern int srt_connect(SRTSOCKET u, const struct sockaddr* name, int namelen);
@@ -520,6 +527,13 @@ SRT_API extern int srt_setsockopt(SRTSOCKET u, int level /*ignored*/, SRT_SOCKOP
 SRT_API extern int srt_getsockflag(SRTSOCKET u, SRT_SOCKOPT opt, void* optval, int* optlen);
 SRT_API extern int srt_setsockflag(SRTSOCKET u, SRT_SOCKOPT opt, const void* optval, int optlen);
 
+typedef struct SRT_SocketGroupData_
+{
+    SRTSOCKET id;
+    SRT_SOCKSTATUS status;
+    sockaddr_storage peeraddr; // Don't want to expose sockaddr_any to public API
+} SRT_SOCKGROUPDATA;
+
 // XXX Note that the srctime functionality doesn't work yet and needs fixing.
 typedef struct SRT_MsgCtrl_
 {
@@ -530,6 +544,8 @@ typedef struct SRT_MsgCtrl_
    uint64_t srctime;     // source timestamp (usec), 0LL: use internal time     
    int32_t pktseq;       // sequence number of the first packet in received message (unused for sending)
    int32_t msgno;        // message number (output value for both sending and receiving)
+   SRT_SOCKGROUPDATA* grpdata;
+   size_t grpdata_size;
 } SRT_MSGCTRL;
 
 // You are free to use either of these two methods to set SRT_MSGCTRL object

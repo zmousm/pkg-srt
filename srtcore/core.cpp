@@ -6712,7 +6712,7 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> ts_tk)
 
       int msglen;
 
-      payload = m_pSndBuffer->readData(&(packet.m_pcData), offset, Ref(packet.m_iMsgNo), Ref(origintime), Ref(msglen));
+      payload = m_pSndBuffer->extractDataToSend(&(packet.m_pcData), offset, Ref(packet.m_iMsgNo), Ref(origintime), Ref(msglen));
 
       if (-1 == payload)
       {
@@ -6773,7 +6773,7 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> ts_tk)
          // It would be nice to research as to whether CSndBuffer::Block::m_iMsgNoBitset field
          // isn't a useless redundant state copy. If it is, then taking the flags here can be removed.
          kflg = m_pCryptoControl->getSndCryptoFlags();
-         if (0 != (payload = m_pSndBuffer->readData(&(packet.m_pcData), Ref(packet.m_iMsgNo), Ref(origintime), kflg)))
+         if (0 != (payload = m_pSndBuffer->extractDataToSend(&(packet.m_pcData), Ref(packet.m_iMsgNo), Ref(origintime), kflg)))
          {
             m_iSndCurrSeqNo = CSeqNo::incseq(m_iSndCurrSeqNo);
             //m_pCryptoControl->m_iSndCurrSeqNo = m_iSndCurrSeqNo;

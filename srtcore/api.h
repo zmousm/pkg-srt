@@ -66,6 +66,7 @@ modified by
 
 #include <map>
 #include <vector>
+#include <list>
 #include <string>
 #include "netinet_any.h"
 #include "udt.h"
@@ -75,6 +76,28 @@ modified by
 #include "epoll.h"
 #include "handshake.h"
 
+typedef Bits<30> SRTSOCKET_GROUP;
+typedef Bits<29, 0> SRTSOCKET_VALUE;
+
+class CUDTGroup
+{
+public:
+
+    struct SocketData
+    {
+        SRTSOCKET id;
+        SRT_SOCKSTATUS laststatus;
+    };
+
+    SRTSOCKET m_GroupID;
+    std::list<SRTSOCKET> m_Group;
+    bool m_selfManaged;
+
+    typedef std::list<SRTSOCKET>::iterator li_t;
+
+    CUDTGroup(): m_GroupID(-1), m_selfManaged(true) {}
+};
+
 class CUDT;
 
 class CUDTSocket
@@ -82,6 +105,8 @@ class CUDTSocket
 public:
    CUDTSocket();
    ~CUDTSocket();
+
+   static CUDTGroup s_DefaultGroup;
 
    SRT_SOCKSTATUS m_Status;                       //< current socket state
 
@@ -92,6 +117,9 @@ public:
 
    SRTSOCKET m_SocketID;                     //< socket ID
    SRTSOCKET m_ListenSocket;                 //< ID of the listener socket; 0 means this is an independent socket
+
+   CUDTGroup::li_t m_IncludedIter;
+   CUDTGroup* m_IncludedGroup;
 
    SRTSOCKET m_PeerID;                       //< peer socket ID
    int32_t m_iISN;                           //< initial sequence number, used to tell different connection from same IP:port
@@ -179,10 +207,11 @@ public:
       // socket APIs
 
    int bind(const SRTSOCKET u, const sockaddr_any& name);
-   int bind(const SRTSOCKET u, UDPSOCKET udpsock);
+   int bind(const SRTSOCKET u, int udpsock);
    int listen(const SRTSOCKET u, int backlog);
    SRTSOCKET accept(const SRTSOCKET listen, sockaddr* addr, int* addrlen);
    int connect(const SRTSOCKET u, const sockaddr* name, int namelen, int32_t forced_isn);
+   int groupConnect(CUDTGroup* g, const sockaddr_any& target);
    int close(const SRTSOCKET u);
    void getpeername(const SRTSOCKET u, sockaddr* name, int* namelen);
    void getsockname(const SRTSOCKET u, sockaddr* name, int* namelen);
@@ -208,6 +237,12 @@ public:
 
    CUDTException* getError();
 
+   CUDTGroup& addGroup(SRTSOCKET id)
+   {
+       // This only ensures that the element exists.
+       return m_Groups[id];
+   }
+
 private:
 //   void init();
 
@@ -215,6 +250,7 @@ private:
 
 private:
    std::map<SRTSOCKET, CUDTSocket*> m_Sockets;       // stores all the socket structures
+   std::map<SRTSOCKET, CUDTGroup> m_Groups;
 
    pthread_mutex_t m_ControlLock;                    // used to synchronize UDT API
 
@@ -235,7 +271,8 @@ private:
    void connect_complete(const SRTSOCKET u);
    CUDTSocket* locateSocket(const SRTSOCKET u);
    CUDTSocket* locatePeer(const sockaddr_any& peer, const SRTSOCKET id, int32_t isn);
-   void updateMux(CUDTSocket* s, const sockaddr_any& addr, const UDPSOCKET* = NULL);
+   CUDTGroup* locateGroup(SRTSOCKET u);
+   void updateMux(CUDTSocket* s, const sockaddr_any& addr, const int* udp_sockets = NULL);
    void updateListenerMux(CUDTSocket* s, const CUDTSocket* ls);
 
 private:

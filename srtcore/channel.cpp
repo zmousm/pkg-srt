@@ -87,6 +87,7 @@ modified by
 #include "packet.h"
 #include "api.h" // SockaddrToString - possibly move it to somewhere else
 #include "logging.h"
+#include "netinet_any.h"
 
 #ifdef WIN32
     typedef int socklen_t;
@@ -187,7 +188,7 @@ void CChannel::open(int family)
     setUDPSockOpt();
 }
 
-void CChannel::attach(UDPSOCKET udpsock, const sockaddr_any& udpsocks_addr)
+void CChannel::attach(int udpsock, const sockaddr_any& udpsocks_addr)
 {
     // The getsockname() call is done before calling it and the
     // result is placed into udpsocks_addr.

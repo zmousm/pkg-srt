@@ -105,18 +105,18 @@ public:
       /// @param [in] kflags Odd|Even crypto key flag
       /// @return Actual length of data read.
 
-   int readData(char** data, ref_t<int32_t> msgno, ref_t<uint64_t> origintime, unsigned kflgs);
+   int extractDataToSend(char** data, ref_t<int32_t> msgno, ref_t<uint64_t> origintime, unsigned kflgs);
 
 
       /// Find data position to pack a DATA packet for a retransmission.
       /// @param [out] data the pointer to the data position.
-      /// @param [in] offset offset from the last ACK point.
+      /// @param [in] offset offset from the last ACK point (backward sequence number difference)
       /// @param [out] msgno message number of the packet.
       /// @param [out] origintime origin time stamp of the message
       /// @param [out] msglen length of the message
       /// @return Actual length of data read.
 
-   int readData(char** data, const int offset, ref_t<int32_t> msgno, ref_t<uint64_t> origintime, ref_t<int> msglen);
+   int extractDataToSend(char** data, const int offset, ref_t<int32_t> msgno, ref_t<uint64_t> origintime, ref_t<int> msglen);
 
       /// Update the ACK point and may release/unmap/return the user data according to the flag.
       /// @param [in] offset number of packets acknowledged.

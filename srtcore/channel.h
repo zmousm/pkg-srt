@@ -92,7 +92,7 @@ public:
       /// Open a UDP channel based on an existing UDP socket.
       /// @param udpsock [in] UDP socket descriptor.
 
-   void attach(UDPSOCKET udpsock, const sockaddr_any& adr);
+   void attach(int udpsock, const sockaddr_any& adr);
 
       /// Disconnect and close the UDP entity.
 
@@ -179,7 +179,7 @@ private:
    //int m_iIPversion;                    // IP version
    //int m_iSockAddrSize;                 // socket address structure size (pre-defined to avoid run-time test)
 
-   UDPSOCKET m_iSocket;                 // socket descriptor
+   int m_iSocket;                 // socket descriptor
 #ifdef SRT_ENABLE_IPOPTS
    int m_iIpTTL;
    int m_iIpToS;
