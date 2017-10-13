@@ -48,14 +48,21 @@ SRTSOCKET srt_create_group() { return CUDT::createGroup(); }
 int srt_include(SRTSOCKET socket, SRTSOCKET group) { return CUDT::addSocketToGroup(socket, group); }
 int srt_exclude(SRTSOCKET socket) { return CUDT::removeSocketFromGroup(socket); }
 SRTSOCKET srt_groupof(SRTSOCKET socket) { return CUDT::getGroupOfSocket(socket); }
+// int srt_bind_multicast()
 
 // Binding and connection management
 int srt_bind(SRTSOCKET u, const struct sockaddr * name, int namelen) { return CUDT::bind(u, name, namelen); }
-int srt_bind_peerof(SRTSOCKET u, int udpsock) { return CUDT::bind(u, udpsock); }
+int srt_bind_acquire(SRTSOCKET u, int udpsock) { return CUDT::bind(u, udpsock); }
 int srt_listen(SRTSOCKET u, int backlog) { return CUDT::listen(u, backlog); }
 SRTSOCKET srt_accept(SRTSOCKET u, struct sockaddr * addr, int * addrlen) { return CUDT::accept(u, addr, addrlen); }
 int srt_connect(SRTSOCKET u, const struct sockaddr * name, int namelen) { return CUDT::connect(u, name, namelen, 0); }
 int srt_connect_debug(SRTSOCKET u, const struct sockaddr * name, int namelen, int32_t forced_isn) { return CUDT::connect(u, name, namelen, forced_isn); }
+int srt_connect_bind(SRTSOCKET u,
+        const struct sockaddr* source, int source_len,
+        const struct sockaddr* target, int target_len)
+{
+    return CUDT::connect(u, source, source_len, target, target_len);
+}
 
 int srt_rendezvous(SRTSOCKET u, const struct sockaddr* local_name, int local_namelen,
         const struct sockaddr* remote_name, int remote_namelen)
@@ -155,9 +162,9 @@ int srt_sendmsg2(SRTSOCKET u, const char * buf, int len, SRT_MSGCTRL *mctrl)
 {
     // Allow NULL mctrl in the API, but not internally.
     if (mctrl)
-        return CUDT::sendmsg2(u, buf, len, mctrl);
+        return CUDT::sendmsg2(u, buf, len, Ref(*mctrl));
     SRT_MSGCTRL mignore = srt_msgctrl_default;
-    return CUDT::sendmsg2(u, buf, len, &mignore);
+    return CUDT::sendmsg2(u, buf, len, Ref(mignore));
 }
 
 int srt_recvmsg2(SRTSOCKET u, char * buf, int len, SRT_MSGCTRL *mctrl)

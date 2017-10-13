@@ -631,4 +631,11 @@ inline ValueType avg_iir(ValueType old_value, ValueType new_value)
     return (old_value*(DEPRLEN-1) + new_value)/DEPRLEN;
 }
 
+#define SRTU_PROPERTY_RO(type, name, field) type name() { return field; }
+#define SRTU_PROPERTY_WO(type, name, field) void name(type arg) { field = arg; }
+#define SRTU_PROPERTY_WO_CHAIN(otype, type, name, field) otype& name(type arg) { field = arg; return *this; }
+#define SRTU_PROPERTY_RW(type, name, field) SRTU_PROPERTY_RO(type, name, field); SRTU_PROPERTY_WO(type, name, field)
+#define SRTU_PROPERTY_RW_CHAIN(otype, type, name, field) SRTU_PROPERTY_RO(type, name, field); SRTU_PROPERTY_WO_CHAIN(otype, type, name, field)
+
+
 #endif

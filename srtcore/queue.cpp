@@ -67,6 +67,7 @@ modified by
 #include <cstring>
 
 #include "common.h"
+#include "api.h"
 #include "core.h"
 #include "netinet_any.h"
 #include "threadname.h"

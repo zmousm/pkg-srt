@@ -75,27 +75,119 @@ modified by
 #include "cache.h"
 #include "epoll.h"
 #include "handshake.h"
+#include "core.h"
 
-typedef Bits<30> SRTSOCKET_GROUP;
-typedef Bits<29, 0> SRTSOCKET_VALUE;
+class CUDTSocket;
 
 class CUDTGroup
 {
 public:
+    enum GroupState
+    {
+        GST_IDLE,
+        GST_RUNNING,
+        GST_BROKEN
+    };
+
+    enum GroupType
+    {
+        GTYPE_UNDEFINED,
+        GTYPE_REDUNDANT,
+    };
 
     struct SocketData
     {
         SRTSOCKET id;
+        CUDTSocket* ps;
         SRT_SOCKSTATUS laststatus;
+        GroupState sndstate;
+        GroupState rcvstate;
+        sockaddr_any agent;
+        sockaddr_any peer;
     };
 
+    typedef std::list<SocketData> group_t;
+    typedef group_t::iterator gli_t;
+    CUDTGroup(): m_GroupID(-1), m_selfManaged(true), m_type(GTYPE_UNDEFINED)
+    {
+        pthread_mutex_init(&m_GroupLock, 0);
+    }
+
+    ~CUDTGroup()
+    {
+        pthread_mutex_destroy(&m_GroupLock);
+    }
+
+    static SocketData prepareData(CUDTSocket* s);
+
+    gli_t add(SocketData data)
+    {
+        CGuard g(m_GroupLock);
+        m_Group.push_back(data);
+        gli_t end = m_Group.end();
+        return --end;
+    }
+
+    struct HaveID
+    {
+        SRTSOCKET id;
+        HaveID(SRTSOCKET sid): id(sid) {}
+        bool operator()(const SocketData& s) { return s.id == id; }
+    };
+
+    gli_t find(SRTSOCKET id)
+    {
+        CGuard g(m_GroupLock);
+        gli_t f = std::find_if(m_Group.begin(), m_Group.end(), HaveID(id));
+        if (f == m_Group.end())
+        {
+            return gli_NULL();
+        }
+        return f;
+    }
+
+    // REMEMBER: the group spec should be taken from the socket
+    // (set m_IncludedGroup to NULL and m_IncludedIter to grp->gli_NULL())
+    // PRIOR TO calling this function.
+    bool remove(SRTSOCKET id)
+    {
+        CGuard g(m_GroupLock);
+        gli_t f = std::find_if(m_Group.begin(), m_Group.end(), HaveID(id));
+        if (f != m_Group.end())
+        {
+            m_Group.erase(f);
+        }
+
+        return false;
+    }
+
+    bool empty()
+    {
+        CGuard g(m_GroupLock);
+        return m_Group.empty();
+    }
+
+    static gli_t gli_NULL() { return s_NoGroup.end(); }
+
+    int send(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
+
+
+private:
+
+    pthread_mutex_t m_GroupLock;
+
     SRTSOCKET m_GroupID;
-    std::list<SRTSOCKET> m_Group;
+    std::list<SocketData> m_Group;
+    static std::list<SocketData> s_NoGroup; // This is to have a predictable "null iterator".
     bool m_selfManaged;
+    GroupType m_type;
 
-    typedef std::list<SRTSOCKET>::iterator li_t;
+public:
 
-    CUDTGroup(): m_GroupID(-1), m_selfManaged(true) {}
+    // Property accessors
+    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRTSOCKET, id, m_GroupID);
+    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, bool, managed, m_selfManaged);
+    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, GroupType, type, m_type);
 };
 
 class CUDT;
@@ -103,10 +195,42 @@ class CUDT;
 class CUDTSocket
 {
 public:
-   CUDTSocket();
+   CUDTSocket():
+       m_Status(SRTS_INIT),
+       m_TimeStamp(0),
+       m_SocketID(0),
+       m_ListenSocket(0),
+       m_IncludedGroup(),
+       m_PeerID(0),
+       m_iISN(0),
+       m_Core(this),
+       m_AcceptCond(),
+       m_AcceptLock(),
+       m_uiBackLog(0),
+       m_iMuxID(-1)
+   {
+       construct();
+   }
+
+   CUDTSocket(const CUDT& listener_core):
+       m_Status(SRTS_INIT),
+       m_TimeStamp(0),
+       m_SocketID(0),
+       m_ListenSocket(0),
+       m_IncludedGroup(),
+       m_PeerID(0),
+       m_iISN(0),
+       m_Core(this, listener_core),
+       m_AcceptCond(),
+       m_AcceptLock(),
+       m_uiBackLog(0),
+       m_iMuxID(-1)
+   {
+       construct();
+   }
    ~CUDTSocket();
 
-   static CUDTGroup s_DefaultGroup;
+   void construct();
 
    SRT_SOCKSTATUS m_Status;                       //< current socket state
 
@@ -118,16 +242,16 @@ public:
    SRTSOCKET m_SocketID;                     //< socket ID
    SRTSOCKET m_ListenSocket;                 //< ID of the listener socket; 0 means this is an independent socket
 
-   CUDTGroup::li_t m_IncludedIter;
+   CUDTGroup::gli_t m_IncludedIter;
    CUDTGroup* m_IncludedGroup;
 
    SRTSOCKET m_PeerID;                       //< peer socket ID
    int32_t m_iISN;                           //< initial sequence number, used to tell different connection from same IP:port
 
-   CUDT* m_pUDT;                             //< pointer to the UDT entity
+   CUDT m_Core;                             //< pointer to the UDT entity
 
-   std::set<SRTSOCKET>* m_pQueuedSockets;    //< set of connections waiting for accept()
-   std::set<SRTSOCKET>* m_pAcceptSockets;    //< set of accept()ed connections
+   std::set<SRTSOCKET> m_QueuedSockets;    //< set of connections waiting for accept()
+   std::set<SRTSOCKET> m_AcceptSockets;    //< set of accept()ed connections
 
    pthread_cond_t m_AcceptCond;              //< used to block "accept" call
    pthread_mutex_t m_AcceptLock;             //< mutex associated to m_AcceptCond
@@ -138,6 +262,8 @@ public:
 
    pthread_mutex_t m_ControlLock;            //< lock this socket exclusively for control APIs: bind/listen/connect
 
+   CUDT& core() { return m_Core; }
+
    static int64_t getPeerSpec(SRTSOCKET id, int32_t isn)
    {
        return (id << 30) + isn;
@@ -147,10 +273,34 @@ public:
        return getPeerSpec(m_PeerID, m_iISN);
    }
 
+   SRT_SOCKSTATUS getStatus();
+
 private:
    CUDTSocket(const CUDTSocket&);
    CUDTSocket& operator=(const CUDTSocket&);
 };
+
+
+inline CUDTGroup::SocketData CUDTGroup::prepareData(CUDTSocket* s)
+{
+    // This uses default GST_BROKEN because when the group operation is done,
+    // then the GST_IDLE state automatically turns into GST_RUNNING. This is
+    // recognized as an initial state of the fresh added socket to the group,
+    // so some "initial configuration" must be done on it, after which it's
+    // turned into GST_RUNNING, that is, it's treated as all others. When
+    // set to GST_BROKEN, this socket is disregarded. This socket isn't cleaned
+    // up, however, unless the status is simultaneously SRTS_BROKEN.
+
+    // The order of operations is then:
+    // - add the socket to the group in this "broken" initial state
+    // - connect the socket (or get it extracted from accept)
+    // - update the socket state (should be SRTS_CONNECTED)
+    // - once the connection is established (may take time with connect), set GST_IDLE
+    // - the next operation of send/recv will automatically turn it into GST_RUNNING
+    SocketData sd = {s->m_SocketID, s, SRTS_INIT, GST_BROKEN, GST_BROKEN, sockaddr_any(), sockaddr_any() };
+    return sd;
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -165,6 +315,8 @@ public:
 
 public:
 
+   enum ErrorHandling { ERH_RETURN, ERH_THROW, ERH_ABORT };
+
    std::string CONID(SRTSOCKET sock) const;
 
       /// initialize the UDT library.
@@ -178,11 +330,10 @@ public:
    int cleanup();
 
       /// Create a new UDT socket.
-      /// @param [in] af IP version, IPv4 (AF_INET) or IPv6 (AF_INET6).
-      /// @param [in] type (ignored)
+      /// @param [out] pps Variable (optional) to which the new socket will be written, if succeeded
       /// @return The new UDT socket ID, or INVALID_SOCK.
 
-   SRTSOCKET newSocket();
+   SRTSOCKET newSocket(CUDTSocket** pps = NULL);
 
       /// Create a new UDT connection.
       /// @param [in] listen the listening UDT socket;
@@ -192,12 +343,6 @@ public:
 
    int newConnection(const SRTSOCKET listen, const sockaddr_any& peer, CHandShake* hs, const CPacket& hspkt);
 
-      /// look up the UDT entity according to its ID.
-      /// @param [in] u the UDT socket ID.
-      /// @return Pointer to the UDT entity.
-
-   CUDT* lookup(const SRTSOCKET u);
-
       /// Check the status of the UDT socket.
       /// @param [in] u the UDT socket ID.
       /// @return UDT socket status, or NONEXIST if not found.
@@ -206,13 +351,16 @@ public:
 
       // socket APIs
 
-   int bind(const SRTSOCKET u, const sockaddr_any& name);
-   int bind(const SRTSOCKET u, int udpsock);
+   int bind(CUDTSocket* u, const sockaddr_any& name);
+   int bind(CUDTSocket* u, int udpsock);
    int listen(const SRTSOCKET u, int backlog);
    SRTSOCKET accept(const SRTSOCKET listen, sockaddr* addr, int* addrlen);
-   int connect(const SRTSOCKET u, const sockaddr* name, int namelen, int32_t forced_isn);
-   int groupConnect(CUDTGroup* g, const sockaddr_any& target);
+   int connect(SRTSOCKET u, const sockaddr* srcname, int srclen, const sockaddr* tarname, int tarlen);
+   int connect(SRTSOCKET u, const sockaddr* name, int namelen, int32_t forced_isn);
+   int connectIn(ref_t<CUDTSocket> s, const sockaddr_any& target, int32_t forced_isn);
+   int groupConnect(ref_t<CUDTGroup> g, const sockaddr_any& source, const sockaddr_any& target);
    int close(const SRTSOCKET u);
+   int close(CUDTSocket* s);
    void getpeername(const SRTSOCKET u, sockaddr* name, int* namelen);
    void getsockname(const SRTSOCKET u, sockaddr* name, int* namelen);
    int select(ud_set* readfds, ud_set* writefds, ud_set* exceptfds, const timeval* timeout);
@@ -268,10 +416,10 @@ private:
    static void TLSDestroy(void* e) {if (NULL != e) delete (CUDTException*)e;}
 
 private:
-   void connect_complete(const SRTSOCKET u);
-   CUDTSocket* locateSocket(const SRTSOCKET u);
+   void connect_complete(SRTSOCKET u);
+   CUDTSocket* locateSocket(SRTSOCKET u, ErrorHandling erh = ERH_RETURN);
    CUDTSocket* locatePeer(const sockaddr_any& peer, const SRTSOCKET id, int32_t isn);
-   CUDTGroup* locateGroup(SRTSOCKET u);
+   CUDTGroup* locateGroup(SRTSOCKET u, ErrorHandling erh = ERH_RETURN);
    void updateMux(CUDTSocket* s, const sockaddr_any& addr, const int* udp_sockets = NULL);
    void updateListenerMux(CUDTSocket* s, const CUDTSocket* ls);
 

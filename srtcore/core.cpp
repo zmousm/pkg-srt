@@ -75,6 +75,7 @@ modified by
 #include <sstream>
 #include "srt.h"
 #include "queue.h"
+#include "api.h"
 #include "core.h"
 #include "logging.h"
 #include "crypto.h"
@@ -205,7 +206,7 @@ void CUDT::construct()
     initSynch();
 }
 
-CUDT::CUDT()
+CUDT::CUDT(CUDTSocket* parent): m_parent(parent)
 {
    construct();
 
@@ -222,7 +223,6 @@ CUDT::CUDT()
    m_Linger.l_linger = 180;
    m_iUDPSndBufSize = 65536;
    m_iUDPRcvBufSize = m_iRcvBufSize * m_iMSS;
-   m_iSockType = UDT_DGRAM;
    m_bRendezvous = false;
 #ifdef SRT_ENABLE_CONNTIMEO
    m_iConnTimeOut = 3000;
@@ -265,7 +265,7 @@ CUDT::CUDT()
    m_Smoother.select("live");
 }
 
-CUDT::CUDT(const CUDT& ancestor)
+CUDT::CUDT(CUDTSocket* parent, const CUDT& ancestor): m_parent(parent)
 {
    construct();
 
@@ -282,7 +282,6 @@ CUDT::CUDT(const CUDT& ancestor)
    m_Linger = ancestor.m_Linger;
    m_iUDPSndBufSize = ancestor.m_iUDPSndBufSize;
    m_iUDPRcvBufSize = ancestor.m_iUDPRcvBufSize;
-   m_iSockType = ancestor.m_iSockType;
    m_bRendezvous = ancestor.m_bRendezvous;
 #ifdef SRT_ENABLE_CONNTIMEO
    m_iConnTimeOut = ancestor.m_iConnTimeOut;
@@ -1215,7 +1214,7 @@ size_t CUDT::fillSrtHandshake(uint32_t* srtdata, size_t srtlen, int msgtype, int
     {
     case SRT_CMD_HSREQ: return fillSrtHandshake_HSREQ(srtdata, srtlen, hs_version);
     case SRT_CMD_HSRSP: return fillSrtHandshake_HSRSP(srtdata, srtlen, hs_version);
-    default: LOGC(mglog.Fatal) << "IPE: createSrtHandshake/sendSrtMsg called with value " << msgtype; return 0;
+    default: LOGC(mglog.Fatal) << "IPE: fillSrtHandshake/sendSrtMsg called with value " << msgtype; return 0;
     }
 }
 
@@ -2520,7 +2519,7 @@ void CUDT::startConnect(const sockaddr_any& serv_addr, int32_t forced_isn)
         m_iISN = m_ConnReq.m_iISN = forced_isn;
     }
 
-    m_iLastDecSeq = m_iISN - 1;
+   // m_iLastDecSeq = m_iISN - 1; <-- purpose unknown; duplicate from FileSmoother?
     m_iSndLastAck = m_iISN;
     m_iSndLastDataAck = m_iISN;
     m_iSndLastFullAck = m_iISN;
@@ -2578,11 +2577,16 @@ void CUDT::startConnect(const sockaddr_any& serv_addr, int32_t forced_isn)
     ///
     //
 
-    // asynchronous connect, return immediately
+    //////////////////////////////////////////////////////
+    // SYNCHRO BAR
+    //////////////////////////////////////////////////////
     if (!m_bSynRecving)
     {
         return;
     }
+
+    // Below this bar, rest of function maintains only and exclusively
+    // the SYNCHRONOUS connection process. 
 
     // Wait for the negotiated configurations from the peer side.
 
@@ -3915,7 +3919,7 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, CHandShake* hs, const CPac
    // use peer's ISN and send it back for security check
    m_iISN = hs->m_iISN;
 
-   m_iLastDecSeq = m_iISN - 1;
+   // m_iLastDecSeq = m_iISN - 1; <-- purpose unknown; duplicate from FileSmoother?
    m_iSndLastAck = m_iISN;
    m_iSndLastDataAck = m_iISN;
    m_iSndLastFullAck = m_iISN;
@@ -4569,12 +4573,13 @@ int CUDT::sendmsg(const char* data, int len, int msttl, bool inorder, uint64_t s
     mctrl.msgttl = msttl;
     mctrl.inorder = inorder;
     mctrl.srctime = srctime;
-    return this->sendmsg2(data, len, &mctrl);
+    return this->sendmsg2(data, len, Ref(mctrl));
 }
 
-int CUDT::sendmsg2(const char* data, int len, SRT_MSGCTRL* mctrl /* [[nonnull]] */)
+int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
 {
     bool bCongestion = false;
+    SRT_MSGCTRL& mctrl = r_mctrl;
 
     // throw an exception if not connected
     if (m_bBroken || m_bClosing)
@@ -4588,8 +4593,8 @@ int CUDT::sendmsg2(const char* data, int len, SRT_MSGCTRL* mctrl /* [[nonnull]] 
         return 0;
     }
 
-    int msttl = mctrl->msgttl;
-    bool inorder = mctrl->inorder;
+    int msttl = mctrl.msgttl;
+    bool inorder = mctrl.inorder;
 
     // Sendmsg isn't restricted to the smoother type, however the smoother
     // may want to have something to say here.
@@ -4746,17 +4751,17 @@ int CUDT::sendmsg2(const char* data, int len, SRT_MSGCTRL* mctrl /* [[nonnull]] 
 
     // insert the user buffer into the sending list
 #ifdef SRT_ENABLE_CBRTIMESTAMP
-    if (mctrl->srctime == 0)
+    if (mctrl.srctime == 0)
     {
         uint64_t currtime_tk;
         CTimer::rdtsc(currtime_tk);
 
         m_ullSndLastCbrTime_tk = max(currtime_tk, m_ullSndLastCbrTime_tk + m_ullInterval_tk);
-        mctrl->srctime = m_ullSndLastCbrTime_tk / m_ullCPUFrequency;
+        mctrl.srctime = m_ullSndLastCbrTime_tk / m_ullCPUFrequency;
     }
 #endif
-    m_pSndBuffer->addBuffer(data, size, mctrl->msgttl, mctrl->inorder, mctrl->srctime, Ref(mctrl->msgno));
-    LOGC(dlog.Debug) << CONID() << "sock:SENDING srctime: " << mctrl->srctime << "us DATA SIZE: " << size;
+    m_pSndBuffer->addBuffer(data, size, mctrl.msgttl, mctrl.inorder, mctrl.srctime, Ref(mctrl.msgno));
+    LOGC(dlog.Debug) << CONID() << "sock:SENDING srctime: " << mctrl.srctime << "us DATA SIZE: " << size;
 
     // insert this socket to the snd list if it is not on the list yet
     m_pSndQueue->m_pSndUList->update(this, CSndUList::rescheduleIf(bCongestion));
@@ -6399,7 +6404,12 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
    case UMSG_CGWARNING: //100 - Delay Warning
       // One way packet delay is increasing, so decrease the sending rate
       m_ullInterval_tk = (uint64_t)ceil(m_ullInterval_tk * 1.125);
-      m_iLastDecSeq = m_iSndCurrSeqNo;
+
+      // The use of this field hasn't been found; a field with the
+      // same name is found in FileSmoother (created after CUDTCC from UDT)
+      // and it's updated with the value of m_iSndCurrSeqNo upon necessity.
+      //m_iLastDecSeq = m_iSndCurrSeqNo;
+
       // XXX Note as interesting fact: this is only prepared for handling,
       // but nothing in the code is sending this message. Probably predicted
       // for a custom smoother. There's a predicted place to call it under
@@ -6774,8 +6784,6 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> ts_tk)
          if (0 != (payload = m_pSndBuffer->extractDataToSend(&(packet.m_pcData), Ref(packet.m_iMsgNo), Ref(origintime), kflg)))
          {
             m_iSndCurrSeqNo = CSeqNo::incseq(m_iSndCurrSeqNo);
-            //m_pCryptoControl->m_iSndCurrSeqNo = m_iSndCurrSeqNo;
-
             packet.m_iSeqNo = m_iSndCurrSeqNo;
 
             // every 16 (0xF) packets, a packet pair is sent
@@ -8031,10 +8039,10 @@ void CUDT::EmitSignal(ETransmissionEvent tev, EventVariant var)
 int CUDT::getsndbuffer(SRTSOCKET u, size_t* blocks, size_t* bytes)
 {
     CUDTSocket* s = s_UDTUnited.locateSocket(u);
-    if (!s || !s->m_pUDT)
+    if (!s)
         return -1;
 
-    CSndBuffer* b = s->m_pUDT->m_pSndBuffer;
+    CSndBuffer* b = s->core().m_pSndBuffer;
 
     if (!b)
         return -1;

@@ -93,7 +93,15 @@ written by
 extern "C" {
 #endif
 
-typedef int SRTSOCKET; // SRTSOCKET is a typedef to int anyway, and it's not even in UDT namespace :)
+typedef int32_t SRTSOCKET;
+
+// The most significant bit 31 (sign bit actually) is left unused,
+// so that all people who check the value for < 0 instead of -1
+// still get what they want. The bit 30 is reserved for marking
+// the "socket group". Most of the API functions should work
+// transparently with the socket descriptor designating a single
+// socket or a socket group.
+static const int32_t SRTGROUP_MASK = (1 << 30);
 
 #ifdef WIN32
    #ifndef __MINGW__
@@ -512,11 +520,17 @@ SRT_API extern int srt_exclude(SRTSOCKET socket);
 SRT_API extern SRTSOCKET srt_groupof(SRTSOCKET socket);
 
 SRT_API extern int srt_bind(SRTSOCKET u, const struct sockaddr* name, int namelen);
-SRT_API extern int srt_bind_peerof(SRTSOCKET u, int sys_udp_sock);
+SRT_API extern int srt_bind_acquire(SRTSOCKET u, int sys_udp_sock);
+// Old name of srt_bind_acquire(), please don't use
+static inline int srt_bind_peerof(SRTSOCKET u, int sys_udp_sock) SRT_ATR_DEPRECATED;
+static inline int srt_bind_peerof(SRTSOCKET u, int sys_udp_sock) { return srt_bind_acquire(u, sys_udp_sock); }
 SRT_API extern int srt_listen(SRTSOCKET u, int backlog);
 SRT_API extern SRTSOCKET srt_accept(SRTSOCKET u, struct sockaddr* addr, int* addrlen);
 SRT_API extern int srt_connect(SRTSOCKET u, const struct sockaddr* name, int namelen);
 SRT_API extern int srt_connect_debug(SRTSOCKET u, const struct sockaddr* name, int namelen, int forced_isn);
+SRT_API extern int srt_connect_bind(SRTSOCKET u,
+        const struct sockaddr* source, int source_len,
+        const struct sockaddr* target, int target_len);
 SRT_API extern int srt_rendezvous(SRTSOCKET u, const struct sockaddr* local_name, int local_namelen,
         const struct sockaddr* remote_name, int remote_namelen);
 SRT_API extern int srt_close(SRTSOCKET u);

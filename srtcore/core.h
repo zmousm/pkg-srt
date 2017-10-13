@@ -74,7 +74,7 @@ modified by
 #include "window.h"
 #include "packet.h"
 #include "channel.h"
-#include "api.h"
+//#include "api.h"
 #include "cache.h"
 #include "queue.h"
 #include "handshake.h"
@@ -143,6 +143,10 @@ enum SeqPairItems
 // Extended SRT Congestion control class - only an incomplete definition required
 class CCryptoControl;
 
+class CUDTUnited;
+
+class CUDTSocket;
+
 // XXX REFACTOR: The 'CUDT' class is to be merged with 'CUDTSocket'.
 // There's no reason for separating them, there's no case of having them
 // anyhow managed separately. After this is done, with a small help with
@@ -152,6 +156,7 @@ class CCryptoControl;
 class CUDT
 {
     friend class CUDTSocket;
+    friend class CUDTGroup;
     friend class CUDTUnited;
     friend class CCC;
     friend struct CUDTComp;
@@ -166,9 +171,9 @@ private: // constructor and desctructor
 
     void construct();
     void clearData();
-    CUDT();
-    CUDT(const CUDT& ancestor);
-    const CUDT& operator=(const CUDT&) {return *this;}
+    CUDT(CUDTSocket* parent);
+    CUDT(CUDTSocket* parent, const CUDT& ancestor);
+    const CUDT& operator=(const CUDT&) {return *this;} // = delete ?
     ~CUDT();
 
 public: //API
@@ -185,6 +190,7 @@ public: //API
     static int listen(SRTSOCKET u, int backlog);
     static SRTSOCKET accept(SRTSOCKET u, sockaddr* addr, int* addrlen);
     static int connect(SRTSOCKET u, const sockaddr* name, int namelen, int32_t forced_isn);
+    static int connect(SRTSOCKET u, const sockaddr* name, int namelen, const sockaddr* tname, int tnamelen);
     static int close(SRTSOCKET u);
     static int getpeername(SRTSOCKET u, sockaddr* name, int* namelen);
     static int getsockname(SRTSOCKET u, sockaddr* name, int* namelen);
@@ -194,7 +200,7 @@ public: //API
     static int recv(SRTSOCKET u, char* buf, int len, int flags);
     static int sendmsg(SRTSOCKET u, const char* buf, int len, int ttl = -1, bool inorder = false, uint64_t srctime = 0LL);
     static int recvmsg(SRTSOCKET u, char* buf, int len, uint64_t& srctime);
-    static int sendmsg2(SRTSOCKET u, const char* buf, int len, SRT_MSGCTRL* mctrl);
+    static int sendmsg2(SRTSOCKET u, const char* buf, int len, ref_t<SRT_MSGCTRL> mctrl);
     static int recvmsg2(SRTSOCKET u, char* buf, int len, SRT_MSGCTRL* mctrl);
     static int64_t sendfile(SRTSOCKET u, std::fstream& ifs, int64_t& offset, int64_t size, int block = SRT_DEFAULT_SENDFILE_BLOCK);
     static int64_t recvfile(SRTSOCKET u, std::fstream& ofs, int64_t& offset, int64_t size, int block = SRT_DEFAULT_RECVFILE_BLOCK);
@@ -216,18 +222,9 @@ public: //API
     static bool setstreamid(SRTSOCKET u, const std::string& sid);
     static std::string getstreamid(SRTSOCKET u);
     static int getsndbuffer(SRTSOCKET u, size_t* blocks, size_t* bytes);
+    static int setError(const CUDTException& e);
+    static int setError(CodeMajor mj, CodeMinor mn, int syserr);
 
-    static int setError(const CUDTException& e)
-    {
-        s_UDTUnited.setError(new CUDTException(e));
-        return SRT_ERROR;
-    }
-
-    static int setError(CodeMajor mj, CodeMinor mn, int syserr)
-    {
-        s_UDTUnited.setError(new CUDTException(mj, mn, syserr));
-        return SRT_ERROR;
-    }
 
 public: // internal API
     static const SRTSOCKET INVALID_SOCK = -1;         // invalid socket descriptor
@@ -274,6 +271,28 @@ public: // internal API
     bool isTsbPd() { return m_bOPT_TsbPd; }
     int RTT() { return m_iRTT; }
     int32_t sndSeqNo() { return m_iSndCurrSeqNo; }
+
+    void overrideSndSeqNo(int32_t seq, bool initial = true)
+    {
+        // This function is predicted to be called from the socket
+        // group managmenet functions to synchronize the sequnece in
+        // all sockes in the redundancy group. THIS sequence given
+        // here is the sequence TO BE STAMPED AT THE EXACTLY NEXT
+        // sent payload. Therefore, screw up the ISN to exactly this
+        // value, and the send sequence to the value one less - because
+        // the m_iSndCurrSeqNo is increased by one immediately before
+        // stamping it to the packet.
+
+        // This function can only be called:
+        // - from the operation on an idle socket in the socket group
+        // - IMMEDIATELY after connection established and BEFORE the first payload
+        // - The corresponding socket at the peer side must be also
+        //   in this idle state!
+        if (initial)
+            m_iISN = seq;
+        m_iSndCurrSeqNo = CSeqNo::decseq(seq);
+    }
+
     int32_t rcvSeqNo() { return m_iRcvCurrSeqNo; }
     int flowWindowSize() { return m_iFlowWindowSize; }
     int32_t deliveryRate() { return m_iDeliveryRate; }
@@ -401,7 +420,7 @@ private:
     /// @param len [in] size of the buffer.
     /// @return Actual size of data received.
 
-    int sendmsg2(const char* data, int len, SRT_MSGCTRL* m);
+    int sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> m);
 
     int recvmsg(char* data, int len, uint64_t& srctime);
 
@@ -502,12 +521,10 @@ private:
     static CUDTUnited s_UDTUnited;               // UDT global management base
 
 private: // Identification
-    SRTSOCKET m_SocketID;                        // UDT socket number
 
-    // XXX Deprecated field. In any place where it's used, UDT_DGRAM is
-    // the only allowed value. The functionality of distinguishing the transmission
-    // method is now in m_Smoother.
-    UDTSockType m_iSockType;                     // Type of the UDT connection (SOCK_STREAM or SOCK_DGRAM)
+    CUDTSocket* const m_parent; // temporary, until the CUDTSocket class is merged with CUDT
+
+    SRTSOCKET m_SocketID;                        // UDT socket number
     SRTSOCKET m_PeerID;                          // peer id, for multiplexer
 
     int m_iMaxSRTPayloadSize;                 // Maximum/regular payload size, in bytes
@@ -616,7 +633,7 @@ private: // Sending related data
     volatile int32_t m_iSndLastAck;              // Last ACK received
     volatile int32_t m_iSndLastDataAck;          // The real last ACK that updates the sender buffer and loss list
     volatile int32_t m_iSndCurrSeqNo;            // The largest sequence number that has been sent
-    int32_t m_iLastDecSeq;                       // Sequence number sent last decrease occurs
+    //int32_t m_iLastDecSeq;                       // Sequence number sent last decrease occurs (actually part of FileSmoother, formerly CUDTCC)
     int32_t m_iSndLastAck2;                      // Last ACK2 sent back
     uint64_t m_ullSndLastAck2Time;               // The time when last ACK2 was sent back
 #ifdef SRT_ENABLE_CBRTIMESTAMP
