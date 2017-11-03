@@ -63,7 +63,9 @@ modified by
 #ifndef __UDT_COMMON_H__
 #define __UDT_COMMON_H__
 
-
+#include <list>
+#include <vector>
+#include <queue>
 #include <cstdlib>
 #ifndef WIN32
    #include <sys/time.h>
@@ -73,8 +75,9 @@ modified by
    //#include <windows.h>
 #endif
 #include <pthread.h>
-#include "udt.h"
+#include "srt.h"
 #include "utilities.h"
+#include "netinet_any.h"
 
 enum UDTSockType
 {
@@ -158,10 +161,17 @@ enum EConnectStatus
     CONN_AGAIN = -2      // No data was read, don't change any state.
 };
 
+enum EConnectMethod
+{
+    COM_ASYNCHRO,
+    COM_SYNCHRO
+};
+
 std::string ConnectStatusStr(EConnectStatus est);
 
 
 const int64_t BW_INFINITE =  30000000/8;         //Infinite=> 30Mbps
+
 
 
 enum ETransmissionEvent
@@ -558,6 +568,7 @@ public:
         CGuard::enterCS(*m_pMutex);
     }
 };
+
 
 ////////////////////////////////////////////////////////////////////////////////
 

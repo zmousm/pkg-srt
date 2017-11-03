@@ -182,6 +182,63 @@ struct BandwidthGuard
     }
 };
 
+bool CheckMediaSpec(const string& prefix, const vector<string>& spec, ref_t<string> r_outspec)
+{
+    // This function prints error messages by itself then returns false.
+    // Otherwise nothing is printed and true is returned.
+    // r_outspec is for a case when a redundancy specification should be translated.
+
+    string& outspec = r_outspec;
+
+    if (spec.empty())
+    {
+        cerr << prefix << ": Specification is empty\n";
+        return false;
+    }
+
+    if (spec.size() == 1)
+    {
+        // Then, whatever.
+        outspec = spec[0];
+        return true;
+    }
+
+    // We have multiple items specified, check each one
+    // it SRT, if so, craft the redundancy URI spec,
+    // otherwise reject
+    vector<string> adrs;
+    map<string,string> uriparam;
+    bool first = true;
+    for (auto uris: spec)
+    {
+        UriParser uri(uris);
+        if (uri.type() != UriParser::SRT)
+        {
+            cerr << ": Multiple media must be all with SRT scheme.\n";
+            return false;
+        }
+
+        adrs.push_back(uri.host() + ":" + uri.port());
+        if (first)
+        {
+            uriparam = uri.parameters();
+            first = false;
+        }
+    }
+
+    outspec = "srt:////group?type=redundancy";
+    for (auto& name_value: uriparam)
+    {
+        string name, value; tie(name, value) = name_value;
+        outspec += "&" + name + "=" + value;
+    }
+    outspec += "&nodes=";
+    for (string& a: adrs)
+        outspec += a + ",";
+
+    return true;
+}
+
 extern "C" void TestLogHandler(void* opaque, int level, const char* file, int line, const char* area, const char* message);
 
 int main( int argc, char** argv )
@@ -201,59 +258,151 @@ int main( int argc, char** argv )
         }
     } cleanupobj;
 
-    vector<string> args;
-    copy(argv+1, argv+argc, back_inserter(args));
 
-    // Check options
-    vector<string> params;
+    OptionName
+        o_timeout   ("<timeout[s]=0> Data transmission timeout", "t",   "to", "timeout" ),
+        o_chunk     ("<chunk=1316> Single reading operation buffer size", "c",   "chunk"),
+        o_bandwidth ("<bw[ms]=0[unlimited]> Input reading speed limit", "b",   "bandwidth", "bitrate"),
+        o_report    ("<frequency[1/pkt]=0> Print bandwidth report periodically", "r",   "bandwidth-report", "bitrate-report"),
+        o_verbose   (" Print size of every packet transferred on stdout", "v",   "verbose"),
+        o_crash     (" Core-dump when connection got broken by whatever reason (developer mode)", "k",   "crash"),
+        o_loglevel  (" Minimum severity for logs", "ll",  "loglevel"),
+        o_logfa     ("", "lfa", "logfa"),
+        o_logfile   ("", "lf",  "logfile"),
+        o_stats     ("", "s",   "stats", "stats-report-frequency"),
+        o_logint    ("",        "loginternal"),
+        o_skipflush ("", "sf",  "skipflush"),
+        o_group     ("<URIs...> Using multiple SRT connections as redundancy group", "g"),
+        o_help      ("", "?",   "help", "-help");
 
-    for (string a: args)
+
+    vector<OptionScheme> optargs = {
+        { o_timeout, OptionScheme::ARG_ONE },
+        { o_chunk, OptionScheme::ARG_ONE },
+        { o_bandwidth, OptionScheme::ARG_ONE },
+        { o_report, OptionScheme::ARG_ONE },
+        { o_verbose, OptionScheme::ARG_NONE },
+        { o_crash, OptionScheme::ARG_NONE },
+        { o_loglevel, OptionScheme::ARG_ONE },
+        { o_logfa, OptionScheme::ARG_ONE },
+        { o_logfile, OptionScheme::ARG_ONE },
+        { o_stats, OptionScheme::ARG_ONE },
+        { o_skipflush, OptionScheme::ARG_NONE },
+        { o_group, OptionScheme::ARG_VAR }
+    };
+
+    options_t params = ProcessOptions(argv, argc, optargs);
+
+    // Check the special option: -g
+    // The syntax is:
+    // ./stransmit -g SRT1 SRT2 SRT3 SRT4: <1, 2, 3> is a source redundancy group, 4 is target
+    // ./stransmit SRT1 -g SRT2 SRT3 SRT4: 1 is a single source, 2 3 4 is a target redundancy group
+    // ./stransmit SRT1 SRT2 SRT3 -g SRT4 SRT5 SRT6: 1, 2, 3 is a source redundancy group, 4, 5, 6 is a target redundancy group
+
+    bool need_help = Option<OutString>(params, "no", o_help) != "no";
+
+    vector<string> args = params[""];
+
+    string source_spec, target_spec;
+    vector<string> groupspec = Option<OutList>(params, vector<string>{}, o_group);
+    vector<string> source_items, target_items;
+
+    if (!need_help)
     {
-        if ( a[0] == '-' )
-        {
-            string key = a.substr(1);
-            size_t pos = key.find(':');
-            if ( pos == string::npos )
-                pos = key.find(' ');
-            string value = pos == string::npos ? "" : key.substr(pos+1);
-            key = key.substr(0, pos);
-            g_options[key] = value;
-            continue;
-        }
+        // You may still need help.
 
-        params.push_back(a);
+        if ( !groupspec.empty() )
+        {
+            // Check if you have something before -g and after -g.
+            if (args.empty())
+            {
+                // Then all items are sources, but the last one is a single target.
+                if (groupspec.size() < 3)
+                {
+                    cerr << "ERROR: Redundancy group: with nothing preceding -g, use -g <SRC-URI1> <SRC-URI2>... <TAR-URI> (at least 3 args)\n";
+                    need_help = true;
+                }
+                else
+                {
+                    copy(groupspec.begin(), groupspec.end()-1, back_inserter(source_items));
+                    target_items.push_back(*(groupspec.end()-1));
+                }
+            }
+            else
+            {
+                // Something before g, something after g. This time -g can accept also one argument.
+                copy(args.begin(), args.end(), back_inserter(source_items));
+                copy(groupspec.begin(), groupspec.end(), back_inserter(target_items));
+            }
+        }
+        else
+        {
+            if (args.size() < 2)
+            {
+                cerr << "ERROR: source and target URI must be specified.\n\n";
+                need_help = true;
+            }
+            else
+            {
+                source_items.push_back(args[0]);
+                target_items.push_back(args[1]);
+            }
+        }
     }
 
-    if ( params.size() != 2 )
+    if (!need_help)
     {
-        cerr << "Usage: " << argv[0] << " [options] <input-uri> <output-uri>\n";
-        cerr << "\t-t:<timeout=0> - connection timeout\n";
-        cerr << "\t-c:<chunk=1316> - max size of data read in one step\n";
-        cerr << "\t-b:<bandwidth> - set SRT bandwidth\n";
-        cerr << "\t-r:<report-frequency=0> - bandwidth report frequency\n";
-        cerr << "\t-s:<stats-report-freq=0> - frequency of status report\n";
-        cerr << "\t-k - crash on error (aka developer mode)\n";
-        cerr << "\t-v - verbose mode (prints also size of every data packet passed)\n";
+        // Redundancy is then simply recognized by the fact that there are
+        // multiple specified inputs or outputs, for SRT caller only. Check
+        // every URI in advance.
+        if (!CheckMediaSpec("INPUT", source_items, Ref(source_spec)))
+            need_help = true;
+        if (!CheckMediaSpec("OUTPUT", target_items, Ref(target_spec)))
+            need_help = true;
+    }
+
+    if (need_help)
+    {
+        cerr << "Usage:\n";
+        cerr << "    (1) " << argv[0] << " [options] <input> <output>\n";
+        cerr << "    (2) " << argv[0] << " <inputs...> -g <outputs...> [options]\n";
+        cerr << "*** (Position of [options] is unrestricted.)\n";
+        cerr << "*** (<variadic...> option parameters can be only terminated by a next option.)\n";
+        cerr << "where:\n";
+        cerr << "    (1) Exactly one input and one output URI spec is required,\n";
+        cerr << "    (2) Multiple SRT inputs or output as redundant links are allowed.\n";
+        cerr << "        `URI1 URI2 -g URI3` uses 1, 2 input and 3 output\n";
+        cerr << "        `-g URI1 URI2 URI3` like above\n";
+        cerr << "        `URI1 -g URI2 URI3` uses 1 input and 2, 3 output\n";
+        cerr << "SUPPORTED URI SCHEMES:\n";
+        cerr << "    srt: use SRT connection\n";
+        cerr << "    udp: read from bound UDP socket or send to given address as UDP\n";
+        cerr << "    file (default if scheme not specified):\n";
+        cerr << "       - empty host/port and absolute file path in the URI\n";
+        cerr << "       - only a filename, also as a relative path\n";
+        cerr << "       - file://con ('con' as host): designates stdin or stdout\n";
+        cerr << "OPTIONS SYNTAX: -option <parameter[unit]=default[meaning]>:\n";
+        for (auto os: optargs)
+            cout << OptionHelpItem(os.id) << endl;
         return 1;
     }
 
-    int timeout = stoi(Option("30", "t", "to", "timeout"), 0, 0);
-    size_t chunk = stoul(Option("0", "c", "chunk"), 0, 0);
+    int timeout = Option<OutNumber>(params, "30", o_timeout);
+    size_t chunk = Option<OutNumber>(params, "0", o_chunk);
     if ( chunk == 0 )
         chunk = DEFAULT_CHUNK;
-    size_t bandwidth = stoul(Option("0", "b", "bandwidth", "bitrate"), 0, 0);
-    transmit_bw_report = stoul(Option("0", "r", "report", "bandwidth-report", "bitrate-report"), 0, 0);
-    transmit_verbose = Option("no", "v", "verbose") != "no";
-    bool crashonx = Option("no", "k", "crash") != "no";
+    size_t bandwidth = Option<OutNumber>(params, "0", o_bandwidth);
+    transmit_bw_report = Option<OutNumber>(params, "0", o_report);
+    transmit_verbose = OptionPresent(params, o_verbose);
+    bool crashonx = OptionPresent(params, o_crash);
 
-    string loglevel = Option("error", "loglevel");
-    string logfa = Option("general", "logfa");
-    string logfile = Option("", "logfile");
-    transmit_stats_report = stoi(Option("0", "s", "stats", "stats-report-frequency"), 0, 0);
+    string loglevel = Option<OutString>(params, "error", o_loglevel);
+    string logfa = Option<OutString>(params, "general", o_logfa);
+    string logfile = Option<OutString>(params, "", o_logfile);
+    transmit_stats_report = Option<OutNumber>(params, "0", o_stats);
 
-    bool internal_log = Option("no", "loginternal") != "no";
-
-    bool skip_flushing = Option("no", "S", "skipflush") != "no";
+    bool internal_log = OptionPresent(params, o_logint);
+    bool skip_flushing = OptionPresent(params, o_skipflush);
 
     std::ofstream logfile_stream; // leave unused if not set
 
@@ -289,20 +438,20 @@ int main( int argc, char** argv )
 #ifdef WIN32
 #define alarm(argument) (void)0
 #else
-    signal(SIGALRM, OnAlarm_Interrupt);
+    //signal(SIGALRM, OnAlarm_Interrupt);
 #endif
     signal(SIGINT, OnINT_SetIntState);
     signal(SIGTERM, OnINT_SetIntState);
 
-    auto src = Source::Create(params[0]);
-    auto tar = Target::Create(params[1]);
+    auto src = Source::Create(source_spec);
+    auto tar = Target::Create(target_spec);
 
     // Now loop until broken
     BandwidthGuard bw(bandwidth);
 
     if ( transmit_verbose )
     {
-        cout << "STARTING TRANSMISSION: '" << params[0] << "' --> '" << params[1] << "'\n";
+        cout << "STARTING TRANSMISSION: '" << source_spec << "' --> '" << target_spec << "'\n";
     }
 
     extern logging::Logger glog;

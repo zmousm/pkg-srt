@@ -32,7 +32,7 @@ using namespace std;
 
 int main( int argc, char** argv )
 {
-    set<string>
+    OptionName
         o_loglevel = { "ll", "loglevel" },
         o_buffer = {"b", "buffer" },
         o_verbose = {"v", "verbose" },
@@ -213,7 +213,7 @@ bool DoUpload(UriParser& ut, string path, string filename)
         size_t shift = 0;
         while (n > 0)
         {
-            int st = srt_send(ss, buf.data()+shift, n, 0);
+            int st = srt_send(ss, buf.data()+shift, n);
             Verb() << "Upload: " << n << " --> " << st << (!shift ? string() : "+" + Sprint(shift));
             if (st == SRT_ERROR)
             {
@@ -311,7 +311,7 @@ bool DoDownload(UriParser& us, string directory, string filename)
 
     for (;;)
     {
-        int n = srt_recv(ss, buf.data(), ::g_buffer_size, 0);
+        int n = srt_recv(ss, buf.data(), ::g_buffer_size);
         if (n == SRT_ERROR)
         {
             cerr << "Download: SRT error: " << srt_getlasterror_str() << endl;

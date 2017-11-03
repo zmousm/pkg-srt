@@ -311,7 +311,7 @@ public:
       /// @param [out] tsbpdtime localtime-based (uSec) packet time stamp including buffering delay
       /// @return actuall size of data read.
 
-   int readMsg(char* data, int len, SRT_MSGCTRL* mctrl);
+   int readMsg(char* data, int len, ref_t<SRT_MSGCTRL> mctrl);
 
       /// Query how many messages are available now.
       /// @param [out] tsbpdtime localtime-based (uSec) packet time stamp including buffering delay
@@ -356,7 +356,7 @@ public:
       /// Add packet timestamp for drift caclculation and compensation
       /// @param [in] timestamp packet time stamp
 
-   void addRcvTsbPdDriftSample(uint32_t timestamp, pthread_mutex_t& mutex_to_lock);
+   void addRcvTsbPdDriftSample(uint32_t timestamp, pthread_mutex_t& lock);
 
 #ifdef SRT_DEBUG_TSBPD_DRIFT
    void printDriftHistogram(int64_t iDrift);

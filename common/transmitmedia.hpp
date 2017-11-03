@@ -17,6 +17,16 @@ class SrtCommon
 
 protected:
 
+    struct Connection
+    {
+        string host;
+        int port;
+        SRTSOCKET socket;
+        int status;
+
+        Connection(string h, int p): host(h), port(p), socket(-1), status(-1) {}
+    };
+
     bool m_output_direction = false; //< Defines which of SND or RCV option variant should be used, also to set SRT_SENDER for output
     bool m_blocking_mode = true; //< enforces using SRTO_SNDSYN or SRTO_RCVSYN, depending on @a m_output_direction
     int m_timeout = 0; //< enforces using SRTO_SNDTIMEO or SRTO_RCVTIMEO, depending on @a m_output_direction
@@ -25,13 +35,18 @@ protected:
     string m_mode;
     string m_adapter;
     map<string, string> m_options; // All other options, as provided in the URI
+    vector<Connection> m_group_nodes;
+    string m_group_type;
+    vector<SRT_SOCKGROUPDATA> m_group_data;
     SRTSOCKET m_sock = SRT_INVALID_SOCK;
     SRTSOCKET m_bindsock = SRT_INVALID_SOCK;
     bool IsUsable() { SRT_SOCKSTATUS st = srt_getsockstate(m_sock); return st > SRTS_INIT && st < SRTS_BROKEN; }
     bool IsBroken() { return srt_getsockstate(m_sock) > SRTS_CONNECTED; }
 
+    void UpdateGroupStatus(const SRT_SOCKGROUPDATA* grpdata, size_t grpdata_size);
+
 public:
-    void InitParameters(string host, map<string,string> par);
+    void InitParameters(string host, string path, map<string,string> par);
     void PrepareListener(string host, int port, int backlog);
     void StealFrom(SrtCommon& src);
     void AcceptNewClient();
@@ -44,12 +59,14 @@ public:
 protected:
 
     void Error(UDT::ERRORINFO& udtError, string src);
-    void Init(string host, int port, map<string,string> par, bool dir_output);
+    void Error(string msg);
+    void Init(string host, int port, string path, map<string,string> par, bool dir_output);
     int AddPoller(SRTSOCKET socket, int modes);
     virtual int ConfigurePost(SRTSOCKET sock);
     virtual int ConfigurePre(SRTSOCKET sock);
 
     void OpenClient(string host, int port);
+    void OpenGroupClient();
     void PrepareClient();
     void SetupAdapter(const std::string& host, int port);
     void ConnectClient(string host, int port);
@@ -72,7 +89,7 @@ class SrtSource: public Source, public SrtCommon
     std::string hostport_copy;
 public:
 
-    SrtSource(std::string host, int port, const std::map<std::string,std::string>& par);
+    SrtSource(std::string host, int port, std::string path, const std::map<std::string,std::string>& par);
     SrtSource()
     {
         // Do nothing - create just to prepare for use
@@ -102,9 +119,9 @@ class SrtTarget: public Target, public SrtCommon
     int srt_epoll = -1;
 public:
 
-    SrtTarget(std::string host, int port, const std::map<std::string,std::string>& par)
+    SrtTarget(std::string host, int port, string path, const std::map<std::string,std::string>& par)
     {
-        Init(host, port, par, true);
+        Init(host, port, path, par, true);
 
         if ( !m_blocking_mode )
         {

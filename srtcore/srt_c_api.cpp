@@ -30,6 +30,10 @@ written by
 #include "srt.h"
 #include "common.h"
 #include "core.h"
+#include "utilities.h"
+
+using namespace std;
+
 
 using namespace std;
 
@@ -44,7 +48,7 @@ SRTSOCKET srt_socket(int , int , int ) { return CUDT::socket(); }
 SRTSOCKET srt_create_socket() { return CUDT::socket(); }
 
 // Group management.
-SRTSOCKET srt_create_group() { return CUDT::createGroup(); }
+SRTSOCKET srt_create_group(SRT_GROUP_TYPE gt) { return CUDT::createGroup(gt); }
 int srt_include(SRTSOCKET socket, SRTSOCKET group) { return CUDT::addSocketToGroup(socket, group); }
 int srt_exclude(SRTSOCKET socket) { return CUDT::removeSocketFromGroup(socket); }
 SRTSOCKET srt_groupof(SRTSOCKET socket) { return CUDT::getGroupOfSocket(socket); }
@@ -116,8 +120,8 @@ int srt_getsockflag(SRTSOCKET u, SRT_SOCKOPT opt, void* optval, int* optlen)
 int srt_setsockflag(SRTSOCKET u, SRT_SOCKOPT opt, const void* optval, int optlen)
 { return CUDT::setsockopt(u, 0, opt, optval, optlen); }
 
-int srt_send(SRTSOCKET u, const char * buf, int len, ...) { return CUDT::send(u, buf, len, 0); }
-int srt_recv(SRTSOCKET u, char * buf, int len, ...) { return CUDT::recv(u, buf, len, 0); }
+int srt_send(SRTSOCKET u, const char * buf, int len) { return CUDT::send(u, buf, len); }
+int srt_recv(SRTSOCKET u, char * buf, int len) { return CUDT::recv(u, buf, len); }
 int srt_sendmsg(SRTSOCKET u, const char * buf, int len, int ttl, int inorder) { return CUDT::sendmsg(u, buf, len, ttl, 0!=  inorder); }
 int srt_recvmsg(SRTSOCKET u, char * buf, int len) { uint64_t ign_srctime; return CUDT::recvmsg(u, buf, len, ign_srctime); }
 int64_t srt_sendfile(SRTSOCKET u, const char* path, int64_t* offset, int64_t size, int block)
@@ -170,9 +174,9 @@ int srt_sendmsg2(SRTSOCKET u, const char * buf, int len, SRT_MSGCTRL *mctrl)
 int srt_recvmsg2(SRTSOCKET u, char * buf, int len, SRT_MSGCTRL *mctrl)
 {
     if (mctrl)
-        return CUDT::recvmsg2(u, buf, len, mctrl);
+        return CUDT::recvmsg2(u, buf, len, Ref(*mctrl));
     SRT_MSGCTRL mignore = srt_msgctrl_default;
-    return CUDT::recvmsg2(u, buf, len, &mignore);
+    return CUDT::recvmsg2(u, buf, len, Ref(mignore));
 }
 
 const char* srt_getlasterror_str() { return UDT::getlasterror().getErrorMessage(); }

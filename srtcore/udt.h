@@ -77,20 +77,22 @@ modified by
 #ifndef __UDT_H__
 #define __UDT_H__
 
+// XXX This is left temporarily for backward
+// compatibility with the old proprietary version
+// of Haivision SRT. This can be removed when the
+// compatibility stuff is moved to the place before
+// #include <srt.h> statement.
+#if defined(SRT_ENABLE_THREADCHECK)
+#undef THREAD_STATE_INIT
+#undef THREAD_EXIT
+#undef THREAD_PAUSED
+#undef THREAD_RESUMED
+#undef INCREMENT_THREAD_ITERATIONS
+#include <threadcheck.h>
+#endif
+
 #include "srt.h"
 
-/*
-* SRT_ENABLE_THREADCHECK (THIS IS SET IN MAKEFILE NOT HERE)
-*/
-#if defined(SRT_ENABLE_THREADCHECK)
-#include <threadcheck.h>
-#else
-#define THREAD_STATE_INIT(name)
-#define THREAD_EXIT()
-#define THREAD_PAUSED()
-#define THREAD_RESUMED()
-#define INCREMENT_THREAD_ITERATIONS()
-#endif
 
 /* Obsolete way to define MINGW */
 #ifndef __MINGW__

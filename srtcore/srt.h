@@ -84,9 +84,27 @@ written by
 #ifdef __GNUG__
 #define SRT_ATR_UNUSED __attribute__((unused))
 #define SRT_ATR_DEPRECATED __attribute__((deprecated))
+#elif defined(_MSC_VER)
+#define SRT_ATR_UNUSED __pragma(warning(suppress: 4100 4101))
+#define SRT_ATR_DEPRECATED __declspec((deprecated))
 #else
 #define SRT_ATR_UNUSED
 #define SRT_ATR_DEPRECATED
+#endif
+
+// These macros come from an old compatibility code
+// which contains enhanced thread tracing support. These
+// macros must be provided at least as a stub so that
+// they can be safely used. 
+
+// You can include your own header BEFORE srt.h and define
+// these macros there, so these stubs won't be used.
+#if !defined(THREAD_STATE_INIT)
+#define THREAD_STATE_INIT(name)
+#define THREAD_EXIT()
+#define THREAD_PAUSED()
+#define THREAD_RESUMED()
+#define INCREMENT_THREAD_ITERATIONS()
 #endif
 
 #ifdef __cplusplus
@@ -182,7 +200,8 @@ typedef enum SRT_SOCKOPT {
     SRTO_SMOOTHER,         // Smoother selection (congestion control algorithm)
     SRTO_MESSAGEAPI,
     SRTO_PAYLOADSIZE,
-    SRTO_TRANSTYPE         // Transmission type (set of options required for given transmission type)
+    SRTO_TRANSTYPE,         // Transmission type (set of options required for given transmission type)
+    SRTO_GROUPCONNECT
 } SRT_SOCKOPT;
 
 // DEPRECATED OPTIONS:
@@ -503,6 +522,14 @@ typedef struct CBytePerfMon SRT_TRACEBSTATS;
 static const SRTSOCKET SRT_INVALID_SOCK = -1;
 static const int SRT_ERROR = -1;
 
+typedef enum SRT_GROUP_TYPE
+{
+    SRT_GTYPE_UNDEFINED,
+    SRT_GTYPE_REDUNDANT,
+    // ...
+    SRT_GTYPE__END
+} SRT_GROUP_TYPE;
+
 // library initialization
 SRT_API extern int srt_startup(void);
 SRT_API extern int srt_cleanup(void);
@@ -514,7 +541,7 @@ SRT_API extern SRTSOCKET srt_socket(int, int, int) SRT_ATR_DEPRECATED;
 SRT_API extern SRTSOCKET srt_create_socket();
 
 // Group management
-SRT_API extern SRTSOCKET srt_create_group();
+SRT_API extern SRTSOCKET srt_create_group(SRT_GROUP_TYPE);
 SRT_API extern int srt_include(SRTSOCKET socket, SRTSOCKET group);
 SRT_API extern int srt_exclude(SRTSOCKET socket);
 SRT_API extern SRTSOCKET srt_groupof(SRTSOCKET socket);
@@ -545,6 +572,7 @@ typedef struct SRT_SocketGroupData_
 {
     SRTSOCKET id;
     SRT_SOCKSTATUS status;
+    int result;
     sockaddr_storage peeraddr; // Don't want to expose sockaddr_any to public API
 } SRT_SOCKGROUPDATA;
 
@@ -561,6 +589,10 @@ typedef struct SRT_MsgCtrl_
    SRT_SOCKGROUPDATA* grpdata;
    size_t grpdata_size;
 } SRT_MSGCTRL;
+
+static const int SRTF_ASYNC = 1,    // Don't wait until every operation completes
+                 SRTF_PARTIAL = 2,  // Accept that only part of the buffer can be sent
+                 SRTF_FULL = 4;
 
 // You are free to use either of these two methods to set SRT_MSGCTRL object
 // to default values: either call srt_msgctrl_init(&obj) or obj = srt_msgctrl_default.
@@ -587,12 +619,12 @@ SRT_API extern const SRT_MSGCTRL srt_msgctrl_default;
 // removed.
 
 // Sending
-SRT_API extern int srt_send(SRTSOCKET u, const char* buf, int len, ...);
+SRT_API extern int srt_send(SRTSOCKET u, const char* buf, int len);
 SRT_API extern int srt_sendmsg(SRTSOCKET u, const char* buf, int len, int ttl/* = -1*/, int inorder/* = false*/);
 SRT_API extern int srt_sendmsg2(SRTSOCKET u, const char* buf, int len, SRT_MSGCTRL *mctrl);
 
 // Receiving
-SRT_API extern int srt_recv(SRTSOCKET u, char* buf, int len, ...);
+SRT_API extern int srt_recv(SRTSOCKET u, char* buf, int len);
 
 // srt_recvmsg is actually an alias to srt_recv, it stays under the old name for compat reasons.
 SRT_API extern int srt_recvmsg(SRTSOCKET u, char* buf, int len);
@@ -602,8 +634,8 @@ SRT_API extern int srt_recvmsg2(SRTSOCKET u, char *buf, int len, SRT_MSGCTRL *mc
 // Special send/receive functions for files only.
 #define SRT_DEFAULT_SENDFILE_BLOCK 364000
 #define SRT_DEFAULT_RECVFILE_BLOCK 7280000
-int64_t srt_sendfile(SRTSOCKET u, const char* path, int64_t* offset, int64_t size, int block);
-int64_t srt_recvfile(SRTSOCKET u, const char* path, int64_t* offset, int64_t size, int block);
+SRT_API int64_t srt_sendfile(SRTSOCKET u, const char* path, int64_t* offset, int64_t size, int block);
+SRT_API int64_t srt_recvfile(SRTSOCKET u, const char* path, int64_t* offset, int64_t size, int block);
 
 
 // last error detection

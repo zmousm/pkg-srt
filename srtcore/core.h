@@ -74,7 +74,6 @@ modified by
 #include "window.h"
 #include "packet.h"
 #include "channel.h"
-//#include "api.h"
 #include "cache.h"
 #include "queue.h"
 #include "handshake.h"
@@ -142,10 +141,177 @@ enum SeqPairItems
 
 // Extended SRT Congestion control class - only an incomplete definition required
 class CCryptoControl;
-
 class CUDTUnited;
+class CUDTSocket;
 
 class CUDTSocket;
+
+class CUDTGroup
+{
+    friend class CUDTUnited;
+
+public:
+    enum GroupState
+    {
+        GST_PENDING,  // The socket is created correctly, but not yet ready for getting data.
+        GST_IDLE,     // The socket should be activated at the next operation immediately.
+        GST_RUNNING,  // The socket was already activated and is in use
+        GST_BROKEN    // The last operation broke the socket, it should be closed.
+    };
+
+    struct SocketData
+    {
+        SRTSOCKET id;
+        CUDTSocket* ps;
+        SRT_SOCKSTATUS laststatus;
+        GroupState sndstate;
+        GroupState rcvstate;
+        sockaddr_any agent;
+        sockaddr_any peer;
+        bool ready_read;
+        bool ready_write;
+        bool ready_error;
+    };
+
+    struct ConfigItem
+    {
+        SRT_SOCKOPT so;
+        std::vector<unsigned char> value;
+
+        template<class T> bool get(T& refr)
+        {
+            if (sizeof(T) > value.size())
+                return false;
+            refr = *(T*)&value[0];
+        }
+
+        ConfigItem(SRT_SOCKOPT o, const void* val, int size): so(o)
+        {
+            value.resize(size);
+            unsigned char* begin = (unsigned char*)val;
+            std::copy(begin, begin+size, value.begin());
+        }
+    };
+
+    struct Payload
+    {
+        SRTSOCKET id;
+        int result;
+        std::vector<char> data;
+        SRT_MSGCTRL ctrl;
+    };
+
+    typedef std::list<SocketData> group_t;
+    typedef group_t::iterator gli_t;
+    CUDTGroup();
+    ~CUDTGroup();
+
+    static SocketData prepareData(CUDTSocket* s);
+
+    gli_t add(SocketData data);
+
+    struct HaveID
+    {
+        SRTSOCKET id;
+        HaveID(SRTSOCKET sid): id(sid) {}
+        bool operator()(const SocketData& s) { return s.id == id; }
+    };
+
+    gli_t find(SRTSOCKET id)
+    {
+        CGuard g(m_GroupLock);
+        gli_t f = std::find_if(m_Group.begin(), m_Group.end(), HaveID(id));
+        if (f == m_Group.end())
+        {
+            return gli_NULL();
+        }
+        return f;
+    }
+
+    // REMEMBER: the group spec should be taken from the socket
+    // (set m_IncludedGroup to NULL and m_IncludedIter to grp->gli_NULL())
+    // PRIOR TO calling this function.
+    bool remove(SRTSOCKET id)
+    {
+        CGuard g(m_GroupLock);
+        gli_t f = std::find_if(m_Group.begin(), m_Group.end(), HaveID(id));
+        if (f != m_Group.end())
+        {
+            m_Group.erase(f);
+        }
+
+        return false;
+    }
+
+    bool empty()
+    {
+        CGuard g(m_GroupLock);
+        return m_Group.empty();
+    }
+
+    void resetStateOn(CUDTSocket* sock);
+
+    void signalReadAvail(CUDTSocket* readysock);
+
+    static gli_t gli_NULL() { return s_NoGroup.end(); }
+
+    int send(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
+    int recv(char* buf, int len, ref_t<SRT_MSGCTRL> mc);
+
+    void close();
+
+    void setOpt(SRT_SOCKOPT optname, const void* optval, int optlen);
+    void getOpt(SRT_SOCKOPT optName, void* optval, ref_t<int> optlen);
+
+private:
+
+    class CUDTUnited* m_pGlobal;
+    pthread_mutex_t m_GroupLock;
+
+    SRTSOCKET m_GroupID;
+    SRTSOCKET m_PeerGroupID;
+    std::list<SocketData> m_Group;
+    static std::list<SocketData> s_NoGroup; // This is to have a predictable "null iterator".
+    bool m_selfManaged;
+    SRT_GROUP_TYPE m_type;
+    CUDTSocket* m_listener; // A "group" can only have one listener.
+    std::set<int> m_sPollID;                     // set of epoll ID to trigger
+    int m_iMaxPayloadSize;
+    bool m_bSynRecving;
+    pthread_t m_GroupReaderThread;
+    std::queue<Payload> m_PayloadQ;
+    pthread_cond_t m_PayloadReadAvail;
+    bool m_bOpened;                    // Set to true on a first use
+
+    // There's no simple way of transforming config
+    // items that are predicted to be used on socket.
+    // Use some options for yourself, store the others
+    // for setting later on a socket.
+    std::vector<ConfigItem> m_config;
+
+    void readerThread();
+    static void* readerThread_fwd(void* arg)
+    {
+        CUDTGroup* self = (CUDTGroup*)arg;
+        self->readerThread();
+        return 0;
+    }
+
+    pthread_cond_t m_GroupReadAvail;
+    volatile CUDTSocket* m_ReadyRead;
+    volatile int32_t m_iRcvDeliveredSeqNo; // Seq of the payload last delivered
+    volatile int32_t m_iRcvContiguousSeqNo; // Seq of the freshest payload stored in the buffer with no loss-gap
+    //volatile std::set<SRTSOCKET> m_Failures;
+
+public:
+
+    // Property accessors
+    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRTSOCKET, id, m_GroupID);
+    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRTSOCKET, peerid, m_PeerGroupID);
+    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, bool, managed, m_selfManaged);
+    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRT_GROUP_TYPE, type, m_type);
+};
+
 
 // XXX REFACTOR: The 'CUDT' class is to be merged with 'CUDTSocket'.
 // There's no reason for separating them, there's no case of having them
@@ -181,10 +347,10 @@ public: //API
     static int startup();
     static int cleanup();
     static SRTSOCKET socket();
-    static SRTSOCKET createGroup();
+    static SRTSOCKET createGroup(SRT_GROUP_TYPE);
     static int addSocketToGroup(SRTSOCKET socket, SRTSOCKET group);
     static int removeSocketFromGroup(SRTSOCKET socket);
-    static int getGroupOfSocket(SRTSOCKET socket);
+    static SRTSOCKET getGroupOfSocket(SRTSOCKET socket);
     static int bind(SRTSOCKET u, const sockaddr* name, int namelen);
     static int bind(SRTSOCKET u, int udpsock);
     static int listen(SRTSOCKET u, int backlog);
@@ -196,12 +362,12 @@ public: //API
     static int getsockname(SRTSOCKET u, sockaddr* name, int* namelen);
     static int getsockopt(SRTSOCKET u, int level, SRT_SOCKOPT optname, void* optval, int* optlen);
     static int setsockopt(SRTSOCKET u, int level, SRT_SOCKOPT optname, const void* optval, int optlen);
-    static int send(SRTSOCKET u, const char* buf, int len, int flags);
-    static int recv(SRTSOCKET u, char* buf, int len, int flags);
+    static int send(SRTSOCKET u, const char* buf, int len);
+    static int recv(SRTSOCKET u, char* buf, int len);
     static int sendmsg(SRTSOCKET u, const char* buf, int len, int ttl = -1, bool inorder = false, uint64_t srctime = 0LL);
     static int recvmsg(SRTSOCKET u, char* buf, int len, uint64_t& srctime);
     static int sendmsg2(SRTSOCKET u, const char* buf, int len, ref_t<SRT_MSGCTRL> mctrl);
-    static int recvmsg2(SRTSOCKET u, char* buf, int len, SRT_MSGCTRL* mctrl);
+    static int recvmsg2(SRTSOCKET u, char* buf, int len, ref_t<SRT_MSGCTRL> mctrl);
     static int64_t sendfile(SRTSOCKET u, std::fstream& ifs, int64_t& offset, int64_t size, int block = SRT_DEFAULT_SENDFILE_BLOCK);
     static int64_t recvfile(SRTSOCKET u, std::fstream& ofs, int64_t& offset, int64_t size, int block = SRT_DEFAULT_RECVFILE_BLOCK);
     static int select(int nfds, ud_set* readfds, ud_set* writefds, ud_set* exceptfds, const timeval* timeout);
@@ -338,8 +504,7 @@ private:
     /// @retval 1 Connection in progress (m_ConnReq turned into RESPONSE)
     /// @retval -1 Connection failed
 
-    EConnectStatus processConnectResponse(const CPacket& pkt, CUDTException* eout, bool synchro) ATR_NOEXCEPT;
-
+    EConnectStatus processConnectResponse(const CPacket& pkt, CUDTException* eout, EConnectMethod synchro) ATR_NOEXCEPT;
 
     // This function works in case of HSv5 rendezvous. It changes the state
     // according to the present state and received message type, as well as the
@@ -371,6 +536,12 @@ private:
     int processSrtMsg_HSREQ(const uint32_t* srtdata, size_t len, uint32_t ts, int hsv);
     int processSrtMsg_HSRSP(const uint32_t* srtdata, size_t len, uint32_t ts, int hsv);
     bool interpretSrtHandshake(const CHandShake& hs, const CPacket& hspkt, uint32_t* out_data, size_t* out_len);
+
+    static CUDTGroup& newGroup(int); // defined EXCEPTIONALLY in api.cpp for convenience reasons
+    // Note: This is an "interpret" function, which should treat the tp as
+    // "possibly group type" that might be out of the existing values.
+    bool interpretGroup(SRTSOCKET grp, SRT_GROUP_TYPE tp);
+    SRTSOCKET makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE tp);
 
     void updateAfterSrtHandshake(int srt_cmd, int hsv);
 
@@ -423,10 +594,8 @@ private:
     int sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> m);
 
     int recvmsg(char* data, int len, uint64_t& srctime);
-
-    int recvmsg2(char* data, int len, SRT_MSGCTRL* m);
-
-    int receiveMessage(char* data, int len, SRT_MSGCTRL* m);
+    int recvmsg2(char* data, int len, ref_t<SRT_MSGCTRL> m);
+    int receiveMessage(char* data, int len, ref_t<SRT_MSGCTRL> m);
     int receiveBuffer(char* data, int len);
 
     /// Request UDT to send out a file described as "fd", starting from "offset", with size of "size".
@@ -459,7 +628,7 @@ private:
     /// @param optval [in] The value to be returned.
     /// @param optlen [out] size of "optval".
 
-    void getOpt(SRT_SOCKOPT optName, void* optval, int& optlen);
+    void getOpt(SRT_SOCKOPT optName, void* optval, ref_t<int> optlen);
 
     /// read the performance data since last sample() call.
     /// @param perf [in, out] pointer to a CPerfMon structure to record the performance data.
@@ -573,6 +742,7 @@ private: // Identification
     int m_iOPT_TsbPdDelay;           // Agent's Rx latency
     int m_iOPT_PeerTsbPdDelay;       // Peer's Rx latency for the traffic made by Agent's Tx.
     bool m_bOPT_TLPktDrop;            // Whether Agent WILL DO TLPKTDROP on Rx.
+    bool m_bOPT_GroupConnect;
     std::string m_sStreamName;
 
     int m_iTsbPdDelay_ms;                           // Rx delay to absorb burst in milliseconds
