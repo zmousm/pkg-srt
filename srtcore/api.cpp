@@ -2500,7 +2500,7 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 {
     vector<gli_t> wipeme;
     vector<gli_t> idlers;
-    SRT_MSGCTRL& mc = r_mc;
+    SRT_MSGCTRL& mc = *r_mc;
 
     int32_t curseq = 0;
 
@@ -2849,7 +2849,7 @@ void CUDTGroup::readerThread()
 
 int CUDTGroup::recv(char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
 {
-    SRT_MSGCTRL& mc = r_mc;
+    SRT_MSGCTRL& mc = *r_mc;
 
     // Check if group queue thread is running, start it lazily.
     if (m_GroupReaderThread == pthread_t())
@@ -3513,6 +3513,13 @@ int sendmsg(
 
 int recvmsg(SRTSOCKET u, char* buf, int len, uint64_t& srctime)
 {
+   return CUDT::recvmsg(u, buf, len, srctime);
+}
+
+int recvmsg(SRTSOCKET u, char* buf, int len)
+{
+   uint64_t srctime;
+
    return CUDT::recvmsg(u, buf, len, srctime);
 }
 

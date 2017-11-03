@@ -82,10 +82,6 @@
 #include <srt.h>
 #include <logging.h>
 
-// The length of the SRT payload used in srt_recvmsg call.
-// So far, this function must be used and up to this length of payload.
-const size_t DEFAULT_CHUNK = 1316;
-
 using namespace std;
 
 
@@ -188,7 +184,7 @@ bool CheckMediaSpec(const string& prefix, const vector<string>& spec, ref_t<stri
     // Otherwise nothing is printed and true is returned.
     // r_outspec is for a case when a redundancy specification should be translated.
 
-    string& outspec = r_outspec;
+    string& outspec = *r_outspec;
 
     if (spec.empty())
     {
@@ -390,11 +386,19 @@ int main( int argc, char** argv )
     int timeout = Option<OutNumber>(params, "30", o_timeout);
     size_t chunk = Option<OutNumber>(params, "0", o_chunk);
     if ( chunk == 0 )
-        chunk = DEFAULT_CHUNK;
+    {
+        chunk = SRT_LIVE_DEF_PLSIZE;
+    }
+    else
+    {
+        transmit_chunk_size = chunk;
+    }
+    
     size_t bandwidth = Option<OutNumber>(params, "0", o_bandwidth);
     transmit_bw_report = Option<OutNumber>(params, "0", o_report);
     transmit_verbose = OptionPresent(params, o_verbose);
     bool crashonx = OptionPresent(params, o_crash);
+
 
     string loglevel = Option<OutString>(params, "error", o_loglevel);
     string logfa = Option<OutString>(params, "general", o_logfa);
@@ -435,9 +439,11 @@ int main( int argc, char** argv )
         }
     }
 
+
 #ifdef WIN32
 #define alarm(argument) (void)0
 #else
+    // XXX THIS IS BLOCKED ONLY FOR TESTING
     //signal(SIGALRM, OnAlarm_Interrupt);
 #endif
     signal(SIGINT, OnINT_SetIntState);

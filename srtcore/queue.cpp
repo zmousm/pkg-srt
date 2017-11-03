@@ -339,7 +339,7 @@ int CSndUList::pop(ref_t<sockaddr_any> r_addr, ref_t<CPacket> r_pkt)
    if (u->packData(r_pkt, Ref(ts)) <= 0)
       return -1;
 
-   r_addr = u->m_PeerAddr;
+   *r_addr = u->m_PeerAddr;
 
    // insert a new entry, ts is the next processing time
    if (ts > 0)
@@ -849,7 +849,7 @@ void CRendezvousQueue::remove(const SRTSOCKET& id, bool should_lock)
 CUDT* CRendezvousQueue::retrieve(const sockaddr_any& addr, ref_t<SRTSOCKET> r_id)
 {
     CGuard vg(m_RIDVectorLock);
-   SRTSOCKET& id = r_id;
+   SRTSOCKET& id = *r_id;
 
     // TODO: optimize search
     for (list<CRL>::iterator i = m_lRendezvousID.begin(); i != m_lRendezvousID.end(); ++ i)
@@ -1156,7 +1156,7 @@ static string PacketInfo(const CPacket& pkt)
     return os.str();
 }
 
-EReadStatus CRcvQueue::worker_RetrieveUnit(ref_t<int32_t> id, ref_t<CUnit*> unit, ref_t<sockaddr_any> r_addr)
+EReadStatus CRcvQueue::worker_RetrieveUnit(ref_t<int32_t> r_id, ref_t<CUnit*> r_unit, ref_t<sockaddr_any> r_addr)
 {
 #ifdef NO_BUSY_WAITING
     m_pTimer->tick();
@@ -1173,8 +1173,8 @@ EReadStatus CRcvQueue::worker_RetrieveUnit(ref_t<int32_t> id, ref_t<CUnit*> unit
         }
     }
     // find next available slot for incoming packet
-    unit = m_UnitQueue.getNextAvailUnit();
-    if (!unit)
+    *r_unit = m_UnitQueue.getNextAvailUnit();
+    if (!*r_unit)
     {
         // no space, skip this packet
         CPacket temp;
@@ -1193,17 +1193,17 @@ EReadStatus CRcvQueue::worker_RetrieveUnit(ref_t<int32_t> id, ref_t<CUnit*> unit
         return rst == RST_ERROR ? RST_ERROR : RST_AGAIN;
     }
 
-    unit->m_Packet.setLength(m_iPayloadSize);
+    r_unit->m_Packet.setLength(m_iPayloadSize);
 
     // reading next incoming packet, recvfrom returns -1 is nothing has been received
     THREAD_PAUSED();
-    EReadStatus rst = m_pChannel->recvfrom(r_addr, unit->m_Packet);
+    EReadStatus rst = m_pChannel->recvfrom(r_addr, r_unit->m_Packet);
     THREAD_RESUMED();
 
     if (rst == RST_OK)
     {
-        id = unit->m_Packet.m_iID;
-        LOGC(mglog.Debug) << "INCOMING PACKET: BOUND=" << SockaddrToString(m_pChannel->bindAddressAny()) << " " << PacketInfo(unit->m_Packet);
+        *r_id = r_unit->m_Packet.m_iID;
+        LOGC(mglog.Debug) << "INCOMING PACKET: BOUND=" << SockaddrToString(m_pChannel->bindAddressAny()) << " " << PacketInfo(r_unit->m_Packet);
     }
     return rst;
 }
@@ -1358,7 +1358,7 @@ EConnectStatus CRcvQueue::worker_TryAsyncRend_OrStore(int32_t id, CUnit* unit, c
 int CRcvQueue::recvfrom(int32_t id, ref_t<CPacket> r_packet)
 {
    CGuard bufferlock(m_PassLock);
-   CPacket& packet = r_packet;
+   CPacket& packet = *r_packet;
 
    map<int32_t, std::queue<CPacket*> >::iterator i = m_mBuffer.find(id);
 

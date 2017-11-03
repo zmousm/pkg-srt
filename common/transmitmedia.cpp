@@ -24,6 +24,7 @@ std::ostream* transmit_cverb = nullptr;
 volatile bool transmit_throw_on_interrupt = false;
 int transmit_bw_report = 0;
 unsigned transmit_stats_report = 0;
+size_t transmit_chunk_size = SRT_LIVE_DEF_PLSIZE;
 
 class FileSource: public Source
 {
@@ -228,6 +229,20 @@ void SrtCommon::InitParameters(string host, string path, map<string,string> par)
     {
         m_outgoing_port = stoi(par.at("port"), 0, 0);
         par.erase("port");
+    }
+
+    // That's kinda clumsy, but it must rely on the defaults.
+    // Default mode is live, so check if the file mode was enforced
+    if (par.count("transtype") == 0 || par["transtype"] != "file")
+    {
+        // If the Live chunk size was nondefault, enforce the size.
+        if (transmit_chunk_size != SRT_LIVE_DEF_PLSIZE)
+        {
+            if (transmit_chunk_size > SRT_LIVE_MAX_PLSIZE)
+                throw std::runtime_error("Chunk size in live mode exceeds 1456 bytes; this is not supported");
+
+            par["payloadsize"] = Sprint(transmit_chunk_size);
+        }
     }
 
     // Assign the others here.
@@ -1069,7 +1084,7 @@ void SrtModel::Establish(ref_t<std::string> name)
         if (name.get() != "")
         {
             Verb() << "Connect with requesting stream [" << name.get() << "]";
-            UDT::setstreamid(m_sock, name);
+            UDT::setstreamid(m_sock, *name);
         }
         else
         {
@@ -1112,7 +1127,7 @@ void SrtModel::Establish(ref_t<std::string> name)
         Verb() << "Accepting a client...";
         AcceptNewClient();
         // This rewrites m_sock with a new SRT socket ("accepted" socket)
-        name = UDT::getstreamid(m_sock);
+        *name = UDT::getstreamid(m_sock);
         Verb() << "... GOT CLIENT for stream [" << name.get() << "]";
     }
 }
