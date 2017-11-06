@@ -263,6 +263,8 @@ public:
     void setOpt(SRT_SOCKOPT optname, const void* optval, int optlen);
     void getOpt(SRT_SOCKOPT optName, void* optval, ref_t<int> optlen);
 
+    SRT_SOCKSTATUS getStatus();
+
 private:
 
     class CUDTUnited* m_pGlobal;
@@ -351,6 +353,7 @@ public: //API
     static int addSocketToGroup(SRTSOCKET socket, SRTSOCKET group);
     static int removeSocketFromGroup(SRTSOCKET socket);
     static SRTSOCKET getGroupOfSocket(SRTSOCKET socket);
+    static bool isgroup(SRTSOCKET sock) { return (sock & SRTGROUP_MASK) != 0; }
     static int bind(SRTSOCKET u, const sockaddr* name, int namelen);
     static int bind(SRTSOCKET u, int udpsock);
     static int listen(SRTSOCKET u, int backlog);

@@ -8497,6 +8497,62 @@ void CUDTGroup::getOpt(SRT_SOCKOPT optname, void* optval, ref_t<int> r_optlen)
     }
 }
 
+struct HaveState: public unary_function< pair<SRTSOCKET, SRT_SOCKSTATUS>, bool >
+{
+    SRT_SOCKSTATUS s;
+    HaveState(SRT_SOCKSTATUS ss):s(ss){}
+    bool operator()(pair<SRTSOCKET, SRT_SOCKSTATUS> i) const { return i.second == s; }
+};
+
+SRT_SOCKSTATUS CUDTGroup::getStatus()
+{
+    typedef vector< pair<SRTSOCKET, SRT_SOCKSTATUS> > states_t;
+    states_t states;
+
+    {
+        CGuard cg(m_GroupLock);
+        for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
+        {
+            switch (gi->sndstate)
+            {
+                // Check only sndstate. If this machine is ONLY receiving,
+                // then rcvstate will turn into GST_RUNNING, while
+                // sndstate will remain GST_IDLE, but still this may only
+                // happen if the socket is connected.
+            case GST_IDLE:
+            case GST_RUNNING:
+                states.push_back(make_pair(gi->id, SRTS_CONNECTED));
+                break;
+
+            case GST_BROKEN:
+                states.push_back(make_pair(gi->id, SRTS_BROKEN));
+                break;
+
+            default: // (pending, or whatever will be added in future)
+                {
+                    SRT_SOCKSTATUS st = m_pGlobal->getStatus(gi->id);
+                    states.push_back(make_pair(gi->id, st));
+                }
+            }
+        }
+    }
+
+    // If at least one socket is connected, the state is connected.
+    if (find_if(states.begin(), states.end(), HaveState(SRTS_CONNECTED)) != states.end())
+        return SRTS_CONNECTED;
+
+    // Otherwise find at least one socket, which's state isn't broken.
+    // If none found, return SRTS_BROKEN.
+    states_t::iterator p = find_if(states.begin(), states.end(), not1(HaveState(SRTS_BROKEN)));
+    if (p != states.end())
+    {
+        // Return that state as group state
+        return p->second;
+    }
+
+    return SRTS_BROKEN;
+}
+
 
 int CUDTUnited::groupConnect(ref_t<CUDTGroup> r_g, const sockaddr_any& source_addr, const sockaddr_any& target_addr)
 {

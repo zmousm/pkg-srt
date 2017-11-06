@@ -2396,7 +2396,7 @@ int CUDT::getsockopt(SRTSOCKET u, int, SRT_SOCKOPT optname, void* optval, int* o
             g->getOpt(optname, optval, Ref(*optlen));
             return 0;
         }
-        CUDTSocket* s = s_UDTUnited.locateSocket(u);
+        CUDTSocket* s = s_UDTUnited.locateSocket(u, s_UDTUnited.ERH_THROW);
         s->core().getOpt(optname, optval, Ref(*optlen));
         return 0;
     }
@@ -3319,9 +3319,9 @@ int CUDT::perfmon(SRTSOCKET u, CPerfMon* perf, bool clear)
 {
    try
    {
-      CUDTSocket* s = s_UDTUnited.locateSocket(u);
-        s->core().sample(perf, clear);
-      return 0;
+       CUDTSocket* s = s_UDTUnited.locateSocket(u, s_UDTUnited.ERH_THROW);
+       s->core().sample(perf, clear);
+       return 0;
    }
    catch (CUDTException e)
    {
@@ -3342,9 +3342,9 @@ int CUDT::bstats(SRTSOCKET u, CBytePerfMon* perf, bool clear)
 {
    try
    {
-      CUDTSocket* s = s_UDTUnited.locateSocket(u);
-        s->core().bstats(perf, clear);
-      return 0;
+       CUDTSocket* s = s_UDTUnited.locateSocket(u, s_UDTUnited.ERH_THROW);
+       s->core().bstats(perf, clear);
+       return 0;
    }
    catch (CUDTException e)
    {
@@ -3397,7 +3397,12 @@ SRT_SOCKSTATUS CUDT::getsockstate(SRTSOCKET u)
 {
    try
    {
-      return s_UDTUnited.getStatus(u);
+       if (isgroup(u))
+       {
+           CUDTGroup* g = s_UDTUnited.locateGroup(u, s_UDTUnited.ERH_THROW);
+           return g->getStatus();
+       }
+       return s_UDTUnited.getStatus(u);
    }
    catch (CUDTException e)
    {
