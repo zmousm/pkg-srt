@@ -284,6 +284,7 @@ CUDT::CUDT(CUDTSocket* parent, const CUDT& ancestor): m_parent(parent)
    m_iUDPSndBufSize = ancestor.m_iUDPSndBufSize;
    m_iUDPRcvBufSize = ancestor.m_iUDPRcvBufSize;
    m_bRendezvous = ancestor.m_bRendezvous;
+   m_SrtHsSide = ancestor.m_SrtHsSide; // actually it sets it to HSD_RESPONDER
 #ifdef SRT_ENABLE_CONNTIMEO
    m_iConnTimeOut = ancestor.m_iConnTimeOut;
 #endif
@@ -3479,6 +3480,7 @@ EConnectStatus CUDT::processConnectResponse(const CPacket& response, CUDTExcepti
              // connection is always bidirectional.
              bidirectional = true;
              hsd = HSD_INITIATOR;
+             m_SrtHsSide = hsd;
          }
          m_llLastReqTime = 0;
          createCrypter(hsd, bidirectional);
@@ -3572,7 +3574,11 @@ EConnectStatus CUDT::postConnect(const CPacket& response, bool rendezvous, CUDTE
         m_iBandwidth = ib.m_iBandwidth;
     }
 
-    setupCC();
+    if (!setupCC())
+    {
+        LOGC(mglog.Error) << "setupCC failed - rejecting connection";
+        return CONN_REJECT;
+    }
 
     // And, I am connected too.
     m_bConnecting = false;
@@ -4184,6 +4190,7 @@ bool CUDT::prepareConnectionObjects(const CHandShake& hs, HandshakeSide hsd, CUD
     if (!createCrypter(hsd, bidirectional)) // Make sure CC is created (lazy)
         return false;
 
+    m_SrtHsSide = hsd;
     return true;
 }
 
@@ -4358,7 +4365,7 @@ bool CUDT::createCrypter(HandshakeSide side, bool bidirectional)
     return m_pCryptoControl->init(side, bidirectional);
 }
 
-void CUDT::setupCC()
+bool CUDT::setupCC()
 {
     // Prepare configuration object,
     // Create the CCC object and configure it.
@@ -4374,7 +4381,10 @@ void CUDT::setupCC()
 
     // Smoother will retrieve whatever parameters it needs
     // from *this.
-    m_Smoother.configure(this);
+    if (!m_Smoother.configure(this))
+    {
+        return false;
+    }
 
     // Override the value of minimum NAK interval, per Smoother's wish.
     // When default 0 value is returned, the current value set by CUDT
@@ -4389,7 +4399,10 @@ void CUDT::setupCC()
         << " rtt=" << m_iRTT
         << " bw=" << m_iBandwidth;
 
-    updateCC(TEV_INIT, TEV_INIT_RESET);
+    if (!updateCC(TEV_INIT, TEV_INIT_RESET))
+        return false;
+
+    return true;
 }
 
 void CUDT::considerLegacySrtHandshake(uint64_t timebase)
@@ -5772,7 +5785,7 @@ void CUDT::bstats(CBytePerfMon* perf, bool clear)
    }
 }
 
-void CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
+bool CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
 {
     // Special things that must be done HERE, not in Smoother,
     // because it involves the input buffer in CUDT. It would be
@@ -5789,7 +5802,7 @@ void CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
             << " sending buffer "
             << (m_pSndBuffer ? "NOT CREATED" : "created");
 
-        return;
+        return false;
     }
 
     LOGC(mglog.Debug) << "updateCC: EVENT:" << TransmissionEventStr(evt);
@@ -5898,6 +5911,8 @@ void CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
     static int callcnt = 0;
     if (!(callcnt++ % 250)) fprintf(stderr, "SndPeriod=%llu\n", (unsigned long long)m_ullInterval_tk/m_ullCPUFrequency);
 #endif
+
+    return true;
 }
 
 void CUDT::initSynch()
@@ -8503,6 +8518,9 @@ int CUDTUnited::groupConnect(ref_t<CUDTGroup> r_g, const sockaddr_any& source_ad
     f = g.add(g.prepareData(ns));
     ns->m_IncludedIter = f;
     ns->m_IncludedGroup = &g;
+
+    // Set it the groupconnect option, as all in-group sockets should have.
+    ns->core().m_bOPT_GroupConnect = true;
 
     // We got it. Bind the socket, if the source address was set
     if (!source_addr.empty())

@@ -874,8 +874,8 @@ private: // synchronization: mutexes and conditions
     void releaseSynch();
 
 private: // Common connection Congestion Control setup
-    void setupCC();
-    void updateCC(ETransmissionEvent, EventVariant arg);
+    bool setupCC();
+    bool updateCC(ETransmissionEvent, EventVariant arg);
     bool createCrypter(HandshakeSide side, bool bidi);
 
 private: // Generation and processing of packets
