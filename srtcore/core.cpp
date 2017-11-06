@@ -4121,7 +4121,10 @@ void CUDTGroup::signalReadAvail(CUDTSocket* rdsock)
     CGuard gl(m_GroupLock);
     // Check again after locking, just for a case.
     if (rdsock->m_IncludedGroup != this)
+    {
+        LOGC(mglog.Debug) << "signalReadAvail: socket %" << rdsock->m_SocketID << " is not a member of THIS group";
         return;
+    }
 
     // Set the currently ready socket to the group info
     m_ReadyRead = rdsock;
@@ -4132,6 +4135,7 @@ void CUDTGroup::signalReadAvail(CUDTSocket* rdsock)
     // to the direct reception queue, to be picked up by
     // the group reading function.
 
+    LOGC(mglog.Debug) << "signalReadAvail: socket %" << rdsock->m_SocketID << " set ready to read, SIGNALING";
     pthread_cond_signal(&m_GroupReadAvail);
 }
 
@@ -8414,10 +8418,13 @@ CUDTGroup::CUDTGroup():
         m_selfManaged(true),
         m_type(SRT_GTYPE_UNDEFINED),
         m_listener(),
-        m_iMaxPayloadSize(0),
+        m_iMaxPayloadSize(-1), // This is "undefined"; will become defined when adding the first socket
         m_bSynRecving(true),
         m_GroupReaderThread(),
-        m_bOpened(false)
+        m_bOpened(false),
+        m_ReadyRead(),
+        m_iRcvDeliveredSeqNo(0),
+        m_iRcvContiguousSeqNo(0)
 {
     pthread_mutex_init(&m_GroupLock, 0);
     pthread_cond_init(&m_GroupReadAvail, 0);
@@ -8521,6 +8528,12 @@ int CUDTUnited::groupConnect(ref_t<CUDTGroup> r_g, const sockaddr_any& source_ad
 
     // Set it the groupconnect option, as all in-group sockets should have.
     ns->core().m_bOPT_GroupConnect = true;
+
+    // Set all options that were requested by the options set on a group
+    // prior to connecting. NOTE: all exceptions thrown from this function
+    // will be propagated.
+    for (size_t i = 0; i < g.m_config.size(); ++i)
+        ns->core().setOpt(g.m_config[i].so, &g.m_config[i].value[0], g.m_config[i].value.size());
 
     // We got it. Bind the socket, if the source address was set
     if (!source_addr.empty())

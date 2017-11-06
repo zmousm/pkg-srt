@@ -853,7 +853,7 @@ int CUDTUnited::connect(SRTSOCKET u, const sockaddr* name, int namelen, int32_t 
 
 int CUDTUnited::connectIn(ref_t<CUDTSocket> r_s, const sockaddr_any& target_addr, int32_t forced_isn)
 {
-    CUDTSocket* s = &r_s.get();
+    CUDTSocket* s = &*r_s;
 
     CGuard cg(s->m_ControlLock);
 
@@ -2839,10 +2839,12 @@ void CUDTGroup::readerThread()
         // the payload queue.
         if (pthread_cond_timedwait(&m_GroupReadAvail, &m_GroupLock, &locktime) == ETIMEDOUT)
         {
+            LOGP(tslog.Debug, "CUDTGroup::readerThread: still no socket ready to read");
         }
         else
         {
-            LOGP(tslog.Debug, "CUDTGroup::readerThread: DATA COND: KICKED.");
+            LOGC(tslog.Debug) << "CUDTGroup::readerThread: socket %"
+                << (m_ReadyRead ? 0 : m_ReadyRead->m_SocketID) << " READY TO READ";
         }
     }
 }
