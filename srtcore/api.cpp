@@ -2707,6 +2707,8 @@ void CUDTGroup::readerThread()
     // lifted up only temporarily when waiting on the CV.
     CGuard gg(m_GroupLock);
 
+    bool running = false;
+
     vector<gli_t> failures;
 
     for (;;)
@@ -2718,7 +2720,9 @@ void CUDTGroup::readerThread()
             again = false;
 
             // Clear this pointer as a sign that you caught it
-            CUDTSocket* s = const_cast<CUDTSocket*>(m_ReadyRead); // Takes out volatile.
+            //CUDTSocket* s = const_cast<CUDTSocket*>(m_ReadyRead); // Takes out volatile.
+            CUDTSocket* s = m_ReadyRead;
+            LOGC(mglog.Debug) << "CLEARING ReadyRead";
             m_ReadyRead = NULL;
 
             Payload pl;
@@ -2735,28 +2739,48 @@ void CUDTGroup::readerThread()
             }
             else
             {
-                int seqdiff = CSeqNo::seqcmp(pl.ctrl.pktseq, m_iRcvDeliveredSeqNo);
-                if (seqdiff <= 0)
+                // If less data were returned, remove the excess buffer from the size.
+                pl.data.resize(pl.result);
+
+                if (!running)
                 {
-                    // This sequence is already delivered. Behave as if no payload
-                    // was available.
-                    again = true;
-                    LOGC(mglog.Debug) << "GROUP: redundant packet seq=" << pl.ctrl.pktseq << " - dropping";
+                    // Take the sequence whatever it is, as a good deal.
+                    m_iRcvDeliveredSeqNo = pl.ctrl.pktseq;
+                    LOGC(mglog.Debug) << "GROUP: first packet - taking sequence as a good deal: #" << m_iRcvDeliveredSeqNo;
+                    running = true;
                 }
                 else
                 {
-                    // Do not buffer aheadcoming packages.
-                    // XXX may happen that some "elephanting prevention" must
-                    // be done somehow and some extra delay applied for the last chance
-                    // to deliver the right package. This will apply additional small
-                    // time on the packet, just to buffer one packet.
-                    //
-                    // Currently just inform about that the packet was jumped over.
-                    if (seqdiff != -1)
+                    int seq_exp = CSeqNo::incseq(m_iRcvDeliveredSeqNo);
+                    int seqdiff = CSeqNo::seqcmp(pl.ctrl.pktseq, seq_exp);
+                    LOGC(mglog.Debug) << "GROUP: incoming=#" << pl.ctrl.pktseq << " expected=#" << seq_exp
+                        << " diff=" << seqdiff;
+
+                    // EXPECTED CASE:
+                    if (seqdiff == 0)
                     {
-                        LOGC(mglog.Warn) << "DROPSEQ (group): " << m_iRcvDeliveredSeqNo << "-" << pl.ctrl.pktseq;
+                        LOGC(mglog.Debug) << "GROUP: subsequent packet seq=" << pl.ctrl.pktseq;
+                        m_iRcvDeliveredSeqNo = pl.ctrl.pktseq;
                     }
-                    m_iRcvDeliveredSeqNo = pl.ctrl.pktseq;
+                    else if (seqdiff < 0)
+                    {
+                        // This sequence is already delivered. Behave as if no payload
+                        // was available.
+                        again = true;
+                        LOGC(mglog.Debug) << "GROUP: redundant packet seq=" << pl.ctrl.pktseq << " - dropping";
+                    }
+                    else
+                    {
+                        // Do not buffer aheadcoming packages.
+                        // XXX may happen that some "elephanting prevention" must
+                        // be done somehow and some extra delay applied for the last chance
+                        // to deliver the right package. This will apply additional small
+                        // time on the packet, just to buffer one packet.
+                        //
+                        // Currently just inform about that the packet was jumped over.
+                        LOGC(mglog.Warn) << "GROUP: aheadcoming; DROPSEQ: " << seq_exp << "-" << CSeqNo::decseq(pl.ctrl.pktseq);
+                        m_iRcvDeliveredSeqNo = pl.ctrl.pktseq;
+                    }
                 }
             }
 
@@ -2770,6 +2794,8 @@ void CUDTGroup::readerThread()
                 // copying the data buffer. In C++11 it would simply use push(move(pl)).
                 m_PayloadQ.push(Payload());
                 std::swap(m_PayloadQ.back(), pl);
+
+                LOGC(mglog.Debug) << "GROUP: signaling the application read readiness";
 
                 // And signal the reader.
                 pthread_cond_signal(&m_PayloadReadAvail);
@@ -2837,15 +2863,89 @@ void CUDTGroup::readerThread()
         // take this mutex over first, this function will buffer (or reject) this
         // payload, or it will be the reading function to pick up the buffer from
         // the payload queue.
-        if (pthread_cond_timedwait(&m_GroupReadAvail, &m_GroupLock, &locktime) == ETIMEDOUT)
+
+        for (;;)
         {
-            LOGP(tslog.Debug, "CUDTGroup::readerThread: still no socket ready to read");
+            if (pthread_cond_timedwait(&m_GroupReadAvail, &m_GroupLock, &locktime) == ETIMEDOUT)
+            {
+                LOGP(tslog.Debug, "CUDTGroup::readerThread: still no socket ready to read");
+                break;
+            }
+            else
+            {
+                if (!m_ReadyRead)
+                {
+                    LOGC(tslog.Debug) << "CUDTGroup::readerThread: SPURIOUS WAKEUP - still waiting";
+                }
+                else
+                {
+                    LOGC(tslog.Debug) << "CUDTGroup::readerThread: socket %" << m_ReadyRead->m_SocketID << " READY TO READ";
+                    break;
+                }
+            }
+        }
+    }
+}
+
+void CUDTGroup::getGroupCount(ref_t<size_t> r_size, ref_t<bool> r_still_alive)
+{
+    CGuard gg(m_GroupLock);
+
+    // Note: linear time, but no way to avoid it.
+    // Fortunately the size of the redundancy group is even
+    // in the craziest possible implementation at worst 4 members long.
+    size_t group_list_size = 0;
+
+    // In managed group, if all sockets made a failure, all
+    // were removed, so the loop won't even run once. In
+    // non-managed, simply no socket found here would have a
+    // connected status.
+    bool still_alive = false;
+
+    for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
+    {
+        if (gi->laststatus == SRTS_CONNECTED)
+        {
+            still_alive = true;
+        }
+        ++group_list_size;
+    }
+
+    // If no socket is found connected, don't update any status.
+    *r_size = group_list_size;
+    *r_still_alive = still_alive;
+}
+
+void CUDTGroup::getMemberStatus(ref_t< vector<SRT_SOCKGROUPDATA> > r_gd, SRTSOCKET wasread, int result, bool again)
+{
+    vector<SRT_SOCKGROUPDATA>& gd = *r_gd;
+
+    CGuard gg(m_GroupLock);
+
+    for (gli_t ig = m_Group.begin(); ig != m_Group.end(); ++ig)
+    {
+        SRT_SOCKGROUPDATA grpdata;
+
+        grpdata.id = ig->id;
+        grpdata.status = ig->ps->getStatus();
+        const sockaddr_any& padr = ig->ps->core().peerAddr();
+        memcpy(&grpdata.peeraddr, &padr, padr.size());
+
+        if (!again && ig->id == wasread)
+        {
+            grpdata.result = result;
+        }
+        else if (ig->ready_error)
+        {
+            grpdata.result = -1;
+            ig->ready_error = false;
         }
         else
         {
-            LOGC(tslog.Debug) << "CUDTGroup::readerThread: socket %"
-                << (m_ReadyRead ? 0 : m_ReadyRead->m_SocketID) << " READY TO READ";
+            // 0 simply means "nothing was done, but no error occurred"
+            grpdata.result = 0;
         }
+        gd.push_back(grpdata);
     }
 }
 
@@ -2854,53 +2954,40 @@ int CUDTGroup::recv(char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     SRT_MSGCTRL& mc = *r_mc;
 
     // Check if group queue thread is running, start it lazily.
-    if (m_GroupReaderThread == pthread_t())
+    if (pthread_equal(m_GroupReaderThread, pthread_t()))
     {
+        LOGC(mglog.Debug) << "CUDTGroup::recv: SPAWNING readerThread";
+        ThreadName tn("SRT:GrpRead");
         pthread_create(&m_GroupReaderThread, NULL, CUDTGroup::readerThread_fwd, this);
     }
 
-    // It actually doesn't matter who will catch the mutex first.
-    // Both will, after checking the present state, do unlock-wait on a CV.
+    // Remember these values because assignment to *mc
+    // will overwrite them.
+    SRT_SOCKGROUPDATA* grpdata = mc.grpdata;
+    size_t grpsize = mc.grpdata_size;
 
-    CGuard gg(m_GroupLock);
+    // This function doesn't lock on m_GroupLock, as in general
+    // it shouldn't do anything with the group data. The payload
+    // queue has its own separate lock, m_PayloadLock. The group
+    // should be locked only occasionally when checking the overall
+    // status, and for that moment, the lock on m_PayloadLock will
+    // be temporarily lifted. The only thing that might happen during
+    // the time when the member status is being checked is that another
+    // payload might arrive, or another payload may be considered,
+    // but finally dropped as redundant.
+
+    LOGC(dlog.Debug) << "CUDTGroup::recv: BEGIN. Going to extract payload size=" << len;
+
+    CGuard lk (m_PayloadLock);
 
     for (;;)
     {
+        SRTSOCKET wasread = -1;
+        int result = -1;
         bool again = m_PayloadQ.empty();
-
-        // In managed group, if all sockets made a failure, all
-        // were removed, so the loop won't even run once. In
-        // non-managed, simply no socket found here would have a
-        // connected status.
-        bool still_alive = false;
-        for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
-        {
-            if (gi->laststatus == SRTS_CONNECTED)
-            {
-                still_alive = true;
-                break;
-            }
-        }
-
-        SRT_SOCKGROUPDATA* grpdata = mc.grpdata;
-        size_t grpsize = mc.grpdata_size;
-
-        if (!still_alive)
-        {
-            mc.grpdata = NULL;
-            mc.grpdata_size = 0;
-            throw CUDTException(MJ_CONNECTION, MN_CONNLOST);
-        }
-
-        // Note: linear time, but no way to avoid it.
-        // Fortunately the size of the redundancy group is even
-        // in the craziest possible implementation at worst 4 members long.
-        size_t group_list_size = m_Group.size();
 
         mc.grpdata = NULL;
 
-        SRTSOCKET wasread = -1;
-        int result = -1;
         if (!again)
         {
             // Extract the payload as it was read successfully.
@@ -2914,51 +3001,101 @@ int CUDTGroup::recv(char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             mc = payload.ctrl;
             wasread = payload.id;
             result = payload.result;
-            if (len >= int(payload.data.size()))
+            if (result != -1)
             {
-                copy(payload.data.begin(), payload.data.end(), buf);
-            }
-            else
-            {
-                // XXX mind SRTF_PARTIAL flag?
-                throw CUDTException(MJ_NOTSUP, MN_XSIZE, 0);
-            }
-        }
-
-        // Rewrite the status into the message control.
-        // If the size is too small, or grpdata was not supplied (NULL passed),
-        // keep NULL in the grpdata, but still set the correct size.
-        if (grpdata && grpsize >= group_list_size)
-        {
-            mc.grpdata = grpdata; // This is the original pointer to the array
-
-            size_t i = 0;
-            for (gli_t ig = m_Group.begin(); ig != m_Group.end(); ++ig, ++i)
-            {
-                grpdata[i].id = ig->id;
-                grpdata[i].status = ig->ps->getStatus();
-
-                if (ig->id == wasread)
+                if (len >= int(payload.data.size()))
                 {
-                    grpdata[i].result = result;
-                }
-                else if (ig->ready_error)
-                {
-                    grpdata[i].result = -1;
-                    ig->ready_error = false;
+                    LOGC(dlog.Debug) << "CUDTGroup::recv: extracting payload of size " << payload.data.size();
+                    copy(payload.data.begin(), payload.data.end(), buf);
                 }
                 else
                 {
-                    // 0 simply means "nothing was done, but no error occurred"
-                    grpdata[i].result = 0;
+                    // XXX mind SRTF_PARTIAL flag?
+                    LOGC(dlog.Error) << "CUDTGroup::recv: payload size=" << payload.data.size() << " exceeds user buffer size=" << len;
+                    throw CUDTException(MJ_NOTSUP, MN_XSIZE, 0);
                 }
             }
+            else
+            {
+                // That was a fake. No payload was available.
+                // This can be done by continue, but we are under lock
+                // here now, so it's impossible that a new payload
+                // appeared in the meantime (there is only one thread
+                // that delivers them, and it will be only resumed
+                // when m_PayloadLock is lifted).
+
+                // XXX It can be tried, if it proves that it makes sense
+                // and can be portable:
+
+                //    lk.forceUnlock();
+                //    sched_yield();
+                //    lk.forceLock();
+                //    continue;
+
+                again = true;
+            }
         }
-        mc.grpdata_size = group_list_size;
+
+        // This is done currently under the LOCK on m_PayloadLock.
+        // The getMemberStatus() function will put a lock on m_GroupLock.
+        // Unlocking the payload lock temporarily in order to not have
+        // two locks at a time applied.
+        //
+        // The lock will be put again, once we're done here.
+
+        lk.forceUnlock();
+        bool still_alive = false;
+        size_t group_list_size = 0;
+        getGroupCount(Ref(group_list_size), Ref(still_alive));
+
+        if (!still_alive)
+        {
+            mc.grpdata = NULL;
+            mc.grpdata_size = 0;
+            throw CUDTException(MJ_CONNECTION, MN_CONNLOST);
+        }
+
+        // Rewrite the status into the message control.
+        vector<SRT_SOCKGROUPDATA> gd;
+        if (!grpdata || grpsize < group_list_size)
+        {
+            mc.grpdata = NULL;
+            LOGC(dlog.Error) << "CUDTGroup::getMemberStatus: user passed " << (grpdata ? "too small" : "no") << " array, returning only size.";
+        }
+        else
+        {
+            mc.grpdata = grpdata; // This is the original pointer to the array
+            LOGC(dlog.Debug) << "CUDTGroup::recv: extracting member status, the user given " << grpdata << " array with size=" << grpsize;
+            getMemberStatus(Ref(gd), wasread, result, again);
+
+            // Don't lock when the result has caused this function to exit
+            // anyway. The lock is then no longer needed.
+
+            LOGC(dlog.Debug) << "CUDTGroup::recv: extracted information for " << gd.size() << " members (place for " << grpsize << ")";
+        }
+
+        // These conditions check if:
+        // - the member status data have been extracted
+        // - the member status data are wanted
+        // - the function is about to return
+        // OTHERWISE, DON'T MODIFY the output grpdata because this loop
+        // is about to be run again!
+        if (mc.grpdata && !gd.empty() && (!again || !m_bSynRecving))
+        {
+            // If the size is too small, or grpdata was not supplied (NULL passed),
+            // keep NULL in the grpdata, but still set the correct size.
+            mc.grpdata_size = gd.size();
+
+            // WILL RETURN NOW - copy the status array
+            copy(gd.begin(), gd.end(), mc.grpdata);
+
+            LOGC(dlog.Debug) << "CUDTGroup::recv: Copying member status information for " << mc.grpdata_size << " members";
+        }
 
         if (!again)
         {
             // Done. You can return now.
+            LOGC(dlog.Debug) << "CUDTGroup::recv: END. returning status=" << result << " to the user";
             return result;
         }
 
@@ -2966,8 +3103,13 @@ int CUDTGroup::recv(char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         if (!m_bSynRecving)
         {
             // Report AGAIN immediately, without waiting for data.
+            LOGC(dlog.Debug) << "CUDTGroup::recv: END. ASYNC-AGAIN. Returning with no data";
             throw CUDTException(MJ_AGAIN, MN_RDAVAIL, 0);
         }
+
+        lk.forceLock();
+        // Ok, now we are back again in the lock
+        // The status array WAS NOT written to the output array
 
         // Wait until a payload is available.
 
@@ -2980,13 +3122,22 @@ int CUDTGroup::recv(char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         locktime.tv_nsec = (exptime % 1000000) * 1000;
 
         // This unlocks the GroupLock, giving it a chance to 
-        if (pthread_cond_timedwait(&m_PayloadReadAvail, &m_GroupLock, &locktime) == ETIMEDOUT)
+        LOGC(mglog.Debug) << "CUDTGroup::recv: LOCK-waiting on the reading lock";
+        if (pthread_cond_timedwait(&m_PayloadReadAvail, &m_PayloadLock, &locktime) == ETIMEDOUT)
         {
+            LOGP(mglog.Debug, "CUDTGroup::recv: DATA COND: timeout; will check if still alive again.");
         }
         else
         {
-            LOGP(tslog.Debug, "CUDTGroup::recv: DATA COND: KICKED.");
+            LOGP(mglog.Debug, "CUDTGroup::recv: DATA COND: KICKED.");
         }
+
+        // Da capo al fine.
+
+        // (the lock is in force now, after the temporary lift in pthread_cond_timedwait,
+        // and the lock is guaranteed to be acquired exactly after the payload producer
+        // has released it; as the producer has produced the payload, it will be now
+        // acquired).
     }
 }
 

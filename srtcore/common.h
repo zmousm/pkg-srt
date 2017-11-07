@@ -531,6 +531,31 @@ public:
    ~CGuard();
 
 public:
+
+   // The force-Lock/Unlock mechanism can be used to forcefully
+   // change the lock on the CGuard object. This is in order to
+   // temporarily change the lock status on the given mutex, but
+   // still do the right job in the destructor. For example, if
+   // a lock has been forcefully unlocked by forceUnlock, then
+   // the CGuard object will not try to unlock it in the destructor,
+   // but again, if the forceLock() was done again, the destructor
+   // will still unlock the mutex.
+   void forceLock()
+   {
+       if (m_iLocked == 0)
+           return;
+       Lock();
+   }
+
+   void forceUnlock()
+   {
+       if (m_iLocked == 0)
+       {
+           m_iLocked = -1;
+           Unlock();
+       }
+   }
+
    static int enterCS(pthread_mutex_t& lock);
    static int leaveCS(pthread_mutex_t& lock);
 
@@ -541,6 +566,17 @@ public:
    static void releaseCond(pthread_cond_t& cond);
 
 private:
+
+   void Lock()
+   {
+       m_iLocked = pthread_mutex_lock(&m_Mutex);
+   }
+
+   void Unlock()
+   {
+        pthread_mutex_unlock(&m_Mutex);
+   }
+
    pthread_mutex_t& m_Mutex;            // Alias name of the mutex to be protected
    int m_iLocked;                       // Locking status
 

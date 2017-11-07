@@ -4052,7 +4052,9 @@ void* CUDT::tsbpd(void* param)
                  // to the direct reception queue, to be picked up by
                  // the group reading function.
 
+                 LOGC(mglog.Debug) << "tsbpd: signalReadAvail -->";
                  pg->signalReadAvail(self->m_parent);
+                 LOGC(mglog.Debug) << "tsbpd: signalReadAvail <--";
              }
              // Currently let's leave it signaling BOTH its own CV and the group CV.
              //else
@@ -4135,7 +4137,7 @@ void CUDTGroup::signalReadAvail(CUDTSocket* rdsock)
     // to the direct reception queue, to be picked up by
     // the group reading function.
 
-    LOGC(mglog.Debug) << "signalReadAvail: socket %" << rdsock->m_SocketID << " set ready to read, SIGNALING";
+    LOGC(mglog.Debug) << "signalReadAvail: socket %" << m_ReadyRead->m_SocketID << " set ready to read, SIGNALING";
     pthread_cond_signal(&m_GroupReadAvail);
 }
 
@@ -8379,7 +8381,9 @@ CUDTGroup::gli_t CUDTGroup::add(SocketData data)
     gli_t end = m_Group.end();
     if (m_iMaxPayloadSize == -1)
     {
-        int plsize = data.ps->m_Core.maxPayloadSize();
+        int plsize = data.ps->m_Core.OPT_PayloadSize();
+        LOGC(mglog.Debug) << "CUDTGroup::add: taking MAX payload size from socket %" << data.ps->m_SocketID << ": " << plsize
+            << " " << (plsize ? "(explicit)" : "(unspecified = fallback to 1456)");
         if (plsize == 0)
             plsize = SRT_LIVE_MAX_PLSIZE;
         // It is stated that the payload size
@@ -8428,12 +8432,14 @@ CUDTGroup::CUDTGroup():
 {
     pthread_mutex_init(&m_GroupLock, 0);
     pthread_cond_init(&m_GroupReadAvail, 0);
+    pthread_mutex_init(&m_PayloadLock, 0);
     pthread_cond_init(&m_PayloadReadAvail, 0);
 }
 
 CUDTGroup::~CUDTGroup()
 {
     pthread_cond_destroy(&m_PayloadReadAvail);
+    pthread_mutex_destroy(&m_PayloadLock);
     pthread_cond_destroy(&m_GroupReadAvail);
     pthread_mutex_destroy(&m_GroupLock);
 }
@@ -8575,13 +8581,6 @@ int CUDTUnited::groupConnect(ref_t<CUDTGroup> r_g, const sockaddr_any& source_ad
     // GST_PENDING state, and only after the socket becomes
     // connected, its status in the group turns into GST_IDLE.
 
-    CUDTGroup::gli_t f;
-
-    // Add socket to the group.
-    f = g.add(g.prepareData(ns));
-    ns->m_IncludedIter = f;
-    ns->m_IncludedGroup = &g;
-
     // Set it the groupconnect option, as all in-group sockets should have.
     ns->core().m_bOPT_GroupConnect = true;
 
@@ -8590,6 +8589,15 @@ int CUDTUnited::groupConnect(ref_t<CUDTGroup> r_g, const sockaddr_any& source_ad
     // will be propagated.
     for (size_t i = 0; i < g.m_config.size(); ++i)
         ns->core().setOpt(g.m_config[i].so, &g.m_config[i].value[0], g.m_config[i].value.size());
+
+    CUDTGroup::gli_t f;
+
+    // Add socket to the group.
+    // Do it after setting all stored options, as some of them may
+    // influence some group data.
+    f = g.add(g.prepareData(ns));
+    ns->m_IncludedIter = f;
+    ns->m_IncludedGroup = &g;
 
     // We got it. Bind the socket, if the source address was set
     if (!source_addr.empty())

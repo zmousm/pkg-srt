@@ -315,14 +315,14 @@ CGuard::CGuard(pthread_mutex_t& lock, bool shouldwork):
     m_iLocked(-1)
 {
     if (shouldwork)
-        m_iLocked = pthread_mutex_lock(&m_Mutex);
+        Lock();
 }
 
 // Automatically unlock in destructor
 CGuard::~CGuard()
 {
     if (m_iLocked == 0)
-        pthread_mutex_unlock(&m_Mutex);
+        Unlock();
 }
 
 int CGuard::enterCS(pthread_mutex_t& lock)

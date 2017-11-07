@@ -924,17 +924,17 @@ bytevector SrtSource::Read(size_t chunk)
 
     SRT_MSGCTRL mctrl = srt_msgctrl_default;
     bool have_group = !m_group_nodes.empty();
-    if (have_group)
-    {
-        mctrl.grpdata = m_group_data.data();
-        mctrl.grpdata_size = m_group_data.size();
-    }
-
     bytevector data(chunk);
     bool ready = true;
     int stat;
     do
     {
+        if (have_group)
+        {
+            mctrl.grpdata = m_group_data.data();
+            mctrl.grpdata_size = m_group_data.size();
+        }
+
         ::transmit_throw_on_interrupt = true;
         stat = srt_recvmsg2(m_sock, data.data(), chunk, &mctrl);
         ::transmit_throw_on_interrupt = false;

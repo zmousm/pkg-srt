@@ -194,7 +194,6 @@ struct sockaddr_any
             return memcmp(&c1, &c2, sizeof(c1)) < 0;
         }
     };
-    
 };
 
 template<> struct sockaddr_any::TypeMap<AF_INET> { typedef sockaddr_in type; };

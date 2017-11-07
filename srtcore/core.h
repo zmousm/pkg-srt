@@ -266,6 +266,10 @@ public:
     SRT_SOCKSTATUS getStatus();
 
 private:
+    // Check if there's at least one connected socket.
+    // If so, grab the status of all member sockets.
+    void getGroupCount(ref_t<size_t> r_size, ref_t<bool> r_still_alive);
+    void getMemberStatus(ref_t< std::vector<SRT_SOCKGROUPDATA> > r_gd, SRTSOCKET wasread, int result, bool again);
 
     class CUDTUnited* m_pGlobal;
     pthread_mutex_t m_GroupLock;
@@ -281,8 +285,6 @@ private:
     int m_iMaxPayloadSize;
     bool m_bSynRecving;
     pthread_t m_GroupReaderThread;
-    std::queue<Payload> m_PayloadQ;
-    pthread_cond_t m_PayloadReadAvail;
     bool m_bOpened;                    // Set to true on a first use
 
     // There's no simple way of transforming config
@@ -300,10 +302,13 @@ private:
     }
 
     pthread_cond_t m_GroupReadAvail;
-    volatile CUDTSocket* m_ReadyRead;
+    CUDTSocket* m_ReadyRead;
     volatile int32_t m_iRcvDeliveredSeqNo; // Seq of the payload last delivered
     volatile int32_t m_iRcvContiguousSeqNo; // Seq of the freshest payload stored in the buffer with no loss-gap
-    //volatile std::set<SRTSOCKET> m_Failures;
+
+    std::queue<Payload> m_PayloadQ;
+    pthread_mutex_t m_PayloadLock;
+    pthread_cond_t m_PayloadReadAvail;
 
 public:
 
@@ -472,6 +477,7 @@ public: // internal API
     size_t OPT_PayloadSize() { return m_zOPT_ExpPayloadSize; }
     uint64_t minNAKInterval() { return m_ullMinNakInt_tk; }
     int32_t ISN() { return m_iISN; }
+    sockaddr_any peerAddr() { return m_PeerAddr; }
 
     // XXX See CUDT::tsbpd() to see how to implement it. This should
     // do the same as TLPKTDROP feature when skipping packets that are agreed
