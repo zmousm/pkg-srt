@@ -248,7 +248,7 @@ int CUDTUnited::cleanup()
    return 0;
 }
 
-SRTSOCKET CUDTUnited::generateSocketID(bool /*group -not implemented*/)
+SRTSOCKET CUDTUnited::generateSocketID(bool for_group)
 {
     int sockval = m_SocketIDGenerator - 1;
 
@@ -289,7 +289,16 @@ SRTSOCKET CUDTUnited::generateSocketID(bool /*group -not implemented*/)
         int startval = sockval;
         for (;;) // Roll until an unused value is found
         {
-            if (m_Sockets.count(sockval))
+            bool exists = false;
+            {
+                CGuard cg(m_ControlLock);
+                exists = for_group ?
+                    m_Groups.count(sockval | SRTGROUP_MASK)
+                 :
+                    m_Sockets.count(sockval);
+            }
+
+            if (exists)
             {
                 // The socket value is in use.
                 --sockval;
@@ -319,8 +328,23 @@ SRTSOCKET CUDTUnited::generateSocketID(bool /*group -not implemented*/)
             break;
         }
     }
+    else
+    {
+        m_SocketIDGenerator = sockval;
+    }
 
-    return m_SocketIDGenerator;
+    // The socket value counter remains with the value rolled
+    // without the group bit set; only the returned value may have
+    // the group bit set.
+
+    if (for_group)
+        sockval = m_SocketIDGenerator | SRTGROUP_MASK;
+    else
+        sockval = m_SocketIDGenerator;
+
+    LOGC(mglog.Debug) << "generateSocketID: " << (for_group ? "(group)" : "") << ": " << sockval;
+
+    return sockval;
 }
 
 SRTSOCKET CUDTUnited::newSocket(CUDTSocket** pps)
@@ -383,13 +407,19 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
     CUDTSocket* ls = locateSocket(listen);
 
     if (!ls)
+    {
+        LOGC(mglog.Error) << "newConnection: the listening socket %" << listen << " does not exist";
         return -1;
+    }
+
+    LOGC(mglog.Debug) << "newConnection: creating new socket after listener %" << listen << " contacted with backlog=" << ls->m_uiBackLog;
 
     // if this connection has already been processed
     if ((ns = locatePeer(peer, hs->m_iID, hs->m_iISN)) != NULL)
     {
         if (ns->m_Core.m_bBroken)
         {
+            LOGC(mglog.Debug) << "newConnection: located a broken peer %" << hs->m_iID << " - discarding.";
             // last connection from the "peer" address has been broken
             ns->m_Status = SRTS_CLOSED;
             ns->m_TimeStamp = CTimer::getTime();
@@ -403,6 +433,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
         {
             // connection already exist, this is a repeated connection request
             // respond with existing HS information
+            LOGC(mglog.Debug) << "newConnection: located a WORKING peer %" << hs->m_iID << " - ADAPTING.";
 
             hs->m_iISN = ns->m_Core.m_iISN;
             hs->m_iMSS = ns->m_Core.m_iMSS;
@@ -415,10 +446,17 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
             //except for this situation a new connection should be started
         }
     }
+    else
+    {
+        LOGC(mglog.Debug) << "newConnection: NOT located any peer %" << hs->m_iID << " - resuming with initial connection.";
+    }
 
     // exceeding backlog, refuse the connection request
     if (ls->m_QueuedSockets.size() >= ls->m_uiBackLog)
+    {
+        LOGC(mglog.Error) << "newConnection: The incoming " << ls->m_QueuedSockets.size() << "-th connection exceeds the backlog=" << ls->m_uiBackLog;
         return -1;
+    }
 
     try
     {
@@ -427,6 +465,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
     }
     catch (...)
     {
+        LOGC(mglog.Error) << "newConnection: encountered EXCEPTION when creating a socket - connection will be rejected";
         delete ns;
         return -1;
     }
@@ -435,7 +474,6 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
     {
         CGuard l_idlock(m_IDLock);
         ns->m_SocketID = generateSocketID();
-        LOGC(mglog.Debug).form("newConnection: generated socket id %d\n", ns->m_SocketID);
     }
     catch (CUDTException& e)
     {
@@ -518,6 +556,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
     }
     catch (...)
     {
+        LOGC(mglog.Error) << "newConnection: error when mapping peer!";
         error = 2;
     }
     CGuard::leaveCS(m_ControlLock);
@@ -529,6 +568,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
     }
     catch (...)
     {
+        LOGC(mglog.Error) << "newConnection: error when queuing socket!";
         error = 3;
     }
     CGuard::leaveCS(ls->m_AcceptLock);
@@ -2045,7 +2085,7 @@ int CUDT::setError(CodeMajor mj, CodeMinor mn, int syserr)
 CUDTGroup& CUDT::newGroup(int type)
 {
     CGuard guard(s_UDTUnited.m_IDLock);
-    SRTSOCKET id = s_UDTUnited.generateSocketID() | SRTGROUP_MASK;
+    SRTSOCKET id = s_UDTUnited.generateSocketID(true);
 
     // Now map the group
     return s_UDTUnited.addGroup(id).id(id).type(SRT_GROUP_TYPE(type));
@@ -2514,14 +2554,19 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
         // Check socket sndstate before sending
         if (d->sndstate == GST_BROKEN)
         {
+            LOGC(dlog.Debug) << "CUDTGroup::send: socket in BROKEN state: %" << d->id;
             // Check if broken permanently
             if (!d->ps || d->ps->m_Status == SRTS_BROKEN)
+            {
+                LOGC(dlog.Debug) << "... permanently. Will delete it from group %" << id();
                 wipeme.push_back(d);
+            }
             continue;
         }
 
         if (d->sndstate == GST_IDLE)
         {
+            LOGC(dlog.Debug) << "CUDTGroup::send: socket in IDLE state: %" << d->id << " - will activate it";
             // This is idle, we'll take care of them next time
             // Might be that:
             // - this socket is idle, while some NEXT socket is running
@@ -2532,21 +2577,25 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             continue;
         }
 
+        LOGC(dlog.Debug) << "CUDTGroup::send: socket in RUNNING state: %" << d->id << " - will send a payload";
         // Remaining sndstate is GST_RUNNING. Send a payload through it.
         int stat = d->ps->core().sendmsg2(buf, len, r_mc);
         // Check the status to sndstate whether this link is still active
         if (stat == -1)
         {
+            LOGC(dlog.Debug) << "... sending FAILED. Setting this socket broken status.";
             // Turn this link broken
             d->sndstate = GST_BROKEN;
             d->laststatus = d->ps->getStatus();
             // However don't delete the socket right now.
             continue;
         }
+        curseq = mc.pktseq;
+
+        LOGC(dlog.Debug) << "... sending SUCCESSFUL, seq=" << curseq;
 
         // Succeeded status, write it to the returned status
         // and grab the data.
-        curseq = mc.pktseq;
         rstat = stat;
     }
 
@@ -2586,25 +2635,39 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     for (vector<gli_t>::iterator i = idlers.begin(); i != idlers.end(); ++i)
     {
         gli_t d = *i;
+        int lastseq = d->ps->core().sndSeqNo();
         if (curseq != 0)
         {
+            LOGC(mglog.Debug) << "CUDTGroup::send: socket %" << d->id
+                << ": override snd sequence " << lastseq
+                << " with " << curseq << " (diff by "
+                << CSeqNo::seqcmp(curseq, lastseq) << "); SENDING PAYLOAD";
             d->ps->core().overrideSndSeqNo(curseq);
+        }
+        else
+        {
+            LOGC(mglog.Debug) << "CUDTGroup::send: socket %" << d->id
+                << ": sequence remains with original value: " << lastseq
+                << "; SENDING PAYLOAD";
         }
 
         // Now send and check the status
         // The link could have got broken
 
         int stat = d->ps->core().sendmsg2(buf, len, r_mc);
+        d->laststatus = d->ps->getStatus();
+
         // Check the status to sndstate whether this link is still active
         if (stat == -1)
         {
+            LOGC(dlog.Debug) << "... sending FAILED. Setting this socket broken status.";
             // Turn this link broken
             d->sndstate = GST_BROKEN;
-            d->laststatus = d->ps->getStatus();
             // However don't delete the socket right now.
             continue;
         }
 
+        d->sndstate = GST_RUNNING;
         rstat = stat;
 
         // Succeeded, so we can take the sequence as a good deal,
@@ -2615,6 +2678,13 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             // This will cause overriding ISN in every next
             // socket processed in this loop.
         }
+        LOGC(dlog.Debug) << "... sending SUCCESSFUL, seq=" << curseq;
+    }
+
+    if (curseq != 0)
+    {
+        LOGC(dlog.Debug) << "CUDTGroup::send: updating current scheduling sequence=" << curseq;
+        m_iLastSchedSeqNo = curseq;
     }
 
     // delete all sockets that were broken at the entrance
@@ -2654,6 +2724,14 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     {
         mc.grpdata[i].id = d->id;
         mc.grpdata[i].status = d->laststatus;
+
+        if (d->sndstate == GST_RUNNING)
+            mc.grpdata[i].result = rstat; // The same result for all sockets, if running
+        else if (d->sndstate == GST_IDLE)
+            mc.grpdata[i].result = 0;
+        else
+            mc.grpdata[i].result = -1;
+
         memcpy(&mc.grpdata[i].peeraddr, &d->peer, d->peer.size());
     }
     mc.grpdata_size = i;

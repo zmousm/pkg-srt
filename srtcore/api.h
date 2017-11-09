@@ -255,6 +255,7 @@ public:
 
    CUDTGroup& addGroup(SRTSOCKET id)
    {
+       CGuard cg(m_ControlLock);
        // This only ensures that the element exists.
        CUDTGroup& g = m_Groups[id];
        g.m_pGlobal = this;
@@ -263,11 +264,14 @@ public:
 
    void deleteGroup(CUDTGroup* g)
    {
+       CGuard cg(m_ControlLock);
        m_Groups.erase(g->m_GroupID);
    }
 
    CUDTGroup* findPeerGroup(SRTSOCKET peergroup)
    {
+       CGuard cg(m_ControlLock);
+
        for (groups_t::iterator i = m_Groups.begin();
                i != m_Groups.end(); ++i)
        {

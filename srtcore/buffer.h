@@ -89,7 +89,7 @@ public:
       /// @param [in] ttl time to live in milliseconds
       /// @param [in] order if the block should be delivered in order, for DGRAM only
 
-   void addBuffer(const char* data, int len, int ttl, bool order, uint64_t srctime, ref_t<int32_t> r_msgno);
+   void addBuffer(const char* data, int len, int ttl, bool order, uint64_t srctime, ref_t<int32_t> r_seqno, ref_t<int32_t> r_msgno);
 
       /// Read a block of data from file and insert it into the sending list.
       /// @param [in] ifs input file stream.
@@ -105,7 +105,7 @@ public:
       /// @param [in] kflags Odd|Even crypto key flag
       /// @return Actual length of data read.
 
-   int extractDataToSend(char** data, ref_t<int32_t> msgno, ref_t<uint64_t> origintime, unsigned kflgs);
+   int extractDataToSend(ref_t<CPacket> r_packet, ref_t<uint64_t> origintime, unsigned kflgs);
 
 
       /// Find data position to pack a DATA packet for a retransmission.
@@ -116,7 +116,7 @@ public:
       /// @param [out] msglen length of the message
       /// @return Actual length of data read.
 
-   int extractDataToSend(char** data, const int offset, ref_t<int32_t> msgno, ref_t<uint64_t> origintime, ref_t<int> msglen);
+   int extractDataToSend(const int offset, ref_t<CPacket> r_packet, ref_t<uint64_t> origintime, ref_t<int> msglen);
 
       /// Update the ACK point and may release/unmap/return the user data according to the flag.
       /// @param [in] offset number of packets acknowledged.
@@ -152,6 +152,7 @@ private:
       int m_iLength;                    // length of the block
 
       int32_t m_iMsgNoBitset;                 // message number
+      int32_t m_iSeqNo;                       // sequence number for scheduling
       uint64_t m_ullOriginTime_us;            // original request time
       uint64_t m_ullSourceTime_us;
       int m_iTTL;                       // time to live (milliseconds)

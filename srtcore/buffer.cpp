@@ -150,9 +150,10 @@ CSndBuffer::~CSndBuffer()
    pthread_mutex_destroy(&m_BufLock);
 }
 
-void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint64_t srctime, ref_t<int32_t> r_msgno)
+void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint64_t srctime, ref_t<int32_t> r_seqno, ref_t<int32_t> r_msgno)
 {
     int32_t& msgno = *r_msgno;
+    int32_t& seqno = *r_seqno;
 
     int size = len / m_iMSS;
     if ((len % m_iMSS) != 0)
@@ -174,6 +175,11 @@ void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint6
         << size << " packets (" << len << " bytes) to send, msgno=" << m_iNextMsgNo
         << (inorder ? "" : " NOT") << " in order";
 
+    // The sequence number passed to this function is the sequence number
+    // that the very first packet from the packet series should get here.
+    // If there's more than one packet, this function must increase it by itself
+    // and then return the accordingly modified sequence number in the reference.
+
     Block* s = m_pLastBlock;
     msgno = m_iNextMsgNo;
     for (int i = 0; i < size; ++ i)
@@ -182,9 +188,12 @@ void CSndBuffer::addBuffer(const char* data, int len, int ttl, bool order, uint6
         if (pktlen > m_iMSS)
             pktlen = m_iMSS;
 
-        LOGC(dlog.Debug) << "addBuffer: spreading from=" << (i*m_iMSS) << " size=" << pktlen << " TO BUFFER:" << (void*)s->m_pcData;
+        LOGC(dlog.Debug) << "addBuffer: seq=" << seqno << " spreading from=" << (i*m_iMSS) << " size=" << pktlen << " TO BUFFER:" << (void*)s->m_pcData;
         memcpy(s->m_pcData, data + i * m_iMSS, pktlen);
         s->m_iLength = pktlen;
+
+        s->m_iSeqNo = seqno;
+        seqno = CSeqNo::incseq(seqno);
 
         s->m_iMsgNoBitset = m_iNextMsgNo | inorder;
         if (i == 0)
@@ -364,15 +373,17 @@ int CSndBuffer::addBufferFromFile(fstream& ifs, int len)
    return total;
 }
 
-int CSndBuffer::extractDataToSend(char** data, ref_t<int32_t> msgno_bitset, ref_t<uint64_t> srctime, unsigned kflgs)
+int CSndBuffer::extractDataToSend(ref_t<CPacket> r_packet, ref_t<uint64_t> srctime, unsigned kflgs)
 {
    // No data to read
    if (m_pCurrBlock == m_pLastBlock)
       return 0;
 
    // Make the packet REFLECT the data stored in the buffer.
-   *data = m_pCurrBlock->m_pcData;
+   r_packet.get().m_pcData = m_pCurrBlock->m_pcData;
    int readlen = m_pCurrBlock->m_iLength;
+   r_packet.get().setLength(readlen);
+   r_packet.get().m_iSeqNo = m_pCurrBlock->m_iSeqNo;
 
    // XXX This is probably done because the encryption should happen
    // just once, and so this sets the encryption flags to both msgno bitset
@@ -398,7 +409,7 @@ int CSndBuffer::extractDataToSend(char** data, ref_t<int32_t> msgno_bitset, ref_
    // flags for PH_MSGNO will be applied directly there. Then here the value for setting
    // PH_MSGNO will be set as is.
    m_pCurrBlock->m_iMsgNoBitset |= MSGNO_ENCKEYSPEC::wrap(kflgs);
-   *msgno_bitset = m_pCurrBlock->m_iMsgNoBitset;
+   r_packet.get().m_iMsgNo = m_pCurrBlock->m_iMsgNoBitset;
 
    *srctime =
       m_pCurrBlock->m_ullSourceTime_us ? m_pCurrBlock->m_ullSourceTime_us :
@@ -411,9 +422,9 @@ int CSndBuffer::extractDataToSend(char** data, ref_t<int32_t> msgno_bitset, ref_
    return readlen;
 }
 
-int CSndBuffer::extractDataToSend(char** data, const int offset, ref_t<int32_t> r_msgno_bitset, ref_t<uint64_t> r_srctime, ref_t<int> r_msglen)
+int CSndBuffer::extractDataToSend(const int offset, ref_t<CPacket> r_packet, ref_t<uint64_t> r_srctime, ref_t<int> r_msglen)
 {
-   int32_t& msgno_bitset = *r_msgno_bitset;
+   int32_t& msgno_bitset = r_packet.get().m_iMsgNo;
    uint64_t& srctime = *r_srctime;
    int& msglen = *r_msglen;
 
@@ -465,8 +476,9 @@ int CSndBuffer::extractDataToSend(char** data, const int offset, ref_t<int32_t> 
       return -1;
    }
 
-   *data = p->m_pcData;
+   r_packet.get().m_pcData = p->m_pcData;
    int readlen = p->m_iLength;
+   r_packet.get().setLength(readlen);
 
    // XXX Here the value predicted to be applied to PH_MSGNO field is extracted.
    // As this function is predicted to extract the data to send as a rexmited packet,
@@ -474,7 +486,7 @@ int CSndBuffer::extractDataToSend(char** data, const int offset, ref_t<int32_t> 
    // encrypted, and with all ENC flags already set. So, the first call to send
    // the packet originally (the other overload of this function) must set these
    // flags.
-   msgno_bitset = p->m_iMsgNoBitset;
+   r_packet.get().m_iMsgNo = p->m_iMsgNoBitset;
 
    srctime = 
       p->m_ullSourceTime_us ? p->m_ullSourceTime_us :

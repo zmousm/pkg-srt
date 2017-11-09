@@ -660,6 +660,13 @@ public:
        return seq - dec;
    }
 
+   static int32_t maxseq(int32_t seq1, int32_t seq2)
+   {
+       if (seqcmp(seq1, seq2) < 0)
+           return seq2;
+       return seq1;
+   }
+
 public:
    static const int32_t m_iSeqNoTH = 0x3FFFFFFF;             // threshold for comparing seq. no.
    static const int32_t m_iMaxSeqNo = 0x7FFFFFFF;            // maximum sequence number used in UDT

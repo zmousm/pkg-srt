@@ -2227,6 +2227,8 @@ bool CUDT::interpretSrtHandshake(const CHandShake& hs, const CPacket& hspkt, uin
     uint32_t* p = reinterpret_cast<uint32_t*>(hspkt.m_pcData + CHandShake::m_iContentSize);
     size_t size = hspkt.getLength() - CHandShake::m_iContentSize; // Due to previous cond check we grant it's >0
 
+    int hsreq_type_cmd = SRT_CMD_NONE;
+
     if ( IsSet(ext_flags, CHandShake::HS_EXT_HSREQ) )
     {
         LOGC(mglog.Debug) << "interpretSrtHandshake: extracting HSREQ/RSP type extension";
@@ -2243,6 +2245,7 @@ bool CUDT::interpretSrtHandshake(const CHandShake& hs, const CPacket& hspkt, uin
 
             if ( cmd == SRT_CMD_HSREQ )
             {
+                hsreq_type_cmd = cmd;
                 // Set is the size as it should, then give it for interpretation for
                 // the proper function.
                 if ( blocklen < SRT_HS__SIZE )
@@ -2264,6 +2267,7 @@ bool CUDT::interpretSrtHandshake(const CHandShake& hs, const CPacket& hspkt, uin
             }
             else if ( cmd == SRT_CMD_HSRSP )
             {
+                hsreq_type_cmd = cmd;
                 // Set is the size as it should, then give it for interpretation for
                 // the proper function.
                 if ( blocklen < SRT_HS__SIZE )
@@ -2457,14 +2461,13 @@ bool CUDT::interpretSrtHandshake(const CHandShake& hs, const CPacket& hspkt, uin
                 }
 
                 memcpy(groupdata, begin+1, bytelen);
-                if ( !interpretGroup(groupdata[0], SRT_GROUP_TYPE(groupdata[1])) )
+                if ( !interpretGroup(groupdata[0], SRT_GROUP_TYPE(groupdata[1]), hsreq_type_cmd) )
                 {
                     return false;
                 }
 
                 have_group = true;
-
-                LOGC(mglog.Debug) << "CONNECTOR'S GROUP [" << groupdata[0] << "] (bytelen=" << bytelen << " blocklen=" << blocklen << ")";
+                LOGC(mglog.Debug) << "CONNECTOR'S PEER GROUP [" << groupdata[0] << "] (bytelen=" << bytelen << " blocklen=" << blocklen << ")";
             }
             else if ( cmd == SRT_CMD_NONE )
             {
@@ -2513,7 +2516,7 @@ bool CUDT::interpretSrtHandshake(const CHandShake& hs, const CPacket& hspkt, uin
     return true;
 }
 
-bool CUDT::interpretGroup(SRTSOCKET grpid, SRT_GROUP_TYPE gtp)
+bool CUDT::interpretGroup(SRTSOCKET grpid, SRT_GROUP_TYPE gtp, int hsreq_type_cmd)
 {
     if (!m_bOPT_GroupConnect)
     {
@@ -2538,6 +2541,9 @@ bool CUDT::interpretGroup(SRTSOCKET grpid, SRT_GROUP_TYPE gtp)
     // The redundancy group requires to make a mirror group
     // on this side, and the newly created socket should
     // be made belong to it.
+
+    static const char* hs_side_name[] = {"draw", "initiator", "responder"};
+    LOGC(mglog.Debug) << "interpretGroup: STATE: HsSide=" << hs_side_name[m_SrtHsSide] << " HS MSG: " << MessageTypeStr(UMSG_EXT, hsreq_type_cmd);
 
     // XXX Here are two separate possibilities:
     //
@@ -2626,31 +2632,42 @@ SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp)
     CGuard cg(s->m_ControlLock);
     // Check if there exists a group that this one is a peer of.
     CUDTGroup* gp = s_UDTUnited.findPeerGroup(peergroup);
-    if (gp && gp->type() != gtp)
+    if (gp)
     {
-        LOGC(mglog.Error) << "HS: Request came to join the peer group %" << peergroup << " type " << gtp
-            << " but the agent group %" << gp->id() << " found with type " << gp->type();
-        return -1;
+        if (gp->type() != gtp)
+        {
+            LOGC(mglog.Error) << "HS: GROUP TYPE COLLISION: peer group=%" << peergroup << " type " << gtp
+                << " agent group=%" << gp->id() << " type" << gp->type();
+            return -1;
+        }
+
+        LOGC(mglog.Debug) << "makeMePeerOf: group for peer=%" << peergroup << " found: %" << gp->id();
     }
-    CUDTGroup& g = gp ? *gp : newGroup(gtp);
+    else
+    {
+        gp = &newGroup(gtp);
+        gp->peerid(peergroup);
+
+        LOGC(mglog.Debug) << "makeMePeerOf: no group has peer=%" << peergroup << " - creating new mirror group %" << gp->id();
+    }
 
     // Copy of addSocketToGroup. No idea how many parts could be common, not much.
 
     // Check if the socket already is in the group
-    CUDTGroup::gli_t f = g.find(m_SocketID);
+    CUDTGroup::gli_t f = gp->find(m_SocketID);
     if (f != CUDTGroup::gli_NULL())
     {
         // XXX This is internal error. Report it, but continue
         // (A newly created socket from acceptAndRespond should not have any group membership yet)
         LOGC(mglog.Error) << "IPE (non-fatal): the socket is in the group, but has no clue about it!";
-        s->m_IncludedGroup = &g;
+        s->m_IncludedGroup = gp;
         s->m_IncludedIter = f;
         return 0;
     }
-    s->m_IncludedGroup = &g;
-    s->m_IncludedIter = g.add(g.prepareData(s));
+    s->m_IncludedGroup = gp;
+    s->m_IncludedIter = gp->add(gp->prepareData(s));
 
-    return g.id();
+    return gp->id();
 }
 
 void CUDT::startConnect(const sockaddr_any& serv_addr, int32_t forced_isn)
@@ -2750,6 +2767,7 @@ void CUDT::startConnect(const sockaddr_any& serv_addr, int32_t forced_isn)
     m_iSndLastDataAck = m_iISN;
     m_iSndLastFullAck = m_iISN;
     m_iSndCurrSeqNo = m_iISN - 1;
+    m_iSndNextSeqNo = m_iISN;
     m_iSndLastAck2 = m_iISN;
     m_ullSndLastAck2Time = CTimer::getTime();
 
@@ -4239,6 +4257,7 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, CHandShake* hs, const CPac
    m_iSndLastDataAck = m_iISN;
    m_iSndLastFullAck = m_iISN;
    m_iSndCurrSeqNo = m_iISN - 1;
+   m_iSndNextSeqNo = m_iISN;
    m_iSndLastAck2 = m_iISN;
    m_ullSndLastAck2Time = CTimer::getTime();
 
@@ -4867,11 +4886,8 @@ void CUDT::checkNeedDrop(ref_t<bool> bCongestion)
             int32_t minlastack = CSeqNo::decseq(m_iSndLastDataAck);
             m_pSndLossList->remove(minlastack);
             /* If we dropped packets not yet sent, advance current position */
-            // THIS MEANS: m_iSndCurrSeqNo = MAX(m_iSndCurrSeqNo, m_iSndLastDataAck-1)
-            if (CSeqNo::seqcmp(m_iSndCurrSeqNo, minlastack) < 0)
-            {
-                m_iSndCurrSeqNo = minlastack;
-            }
+            m_iSndCurrSeqNo = CSeqNo::maxseq(m_iSndCurrSeqNo, minlastack);
+
             LOGC(dlog.Debug).form("drop,now %lluus,%d-%d seqs,%d pkts,%d bytes,%d ms",
                     (unsigned long long)CTimer::getTime(),
                     realack, m_iSndCurrSeqNo,
@@ -5082,8 +5098,22 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
         mctrl.srctime = m_ullSndLastCbrTime_tk / m_ullCPUFrequency;
     }
 #endif
-    m_pSndBuffer->addBuffer(data, size, mctrl.msgttl, mctrl.inorder, mctrl.srctime, Ref(mctrl.msgno));
-    LOGC(dlog.Debug) << CONID() << "sock:SENDING srctime: " << mctrl.srctime << "us DATA SIZE: " << size;
+
+    int32_t seqno = m_iSndNextSeqNo;
+
+    // Set this predicted next sequence to the control information.
+    // It's the sequence of the FIRST (!) packet from all packets used to send
+    // this buffer. Values from this field will be monotonic only if you always
+    // have one packet per buffer (as it's in live mode).
+    mctrl.pktseq = seqno;
+
+    // seqno is INPUT-OUTPUT value:
+    // - INPUT: the current sequence number to be placed for the next scheduled packet
+    // - OUTPUT: value of the sequence number to be put on the first packet at the next sendmsg2 call.
+    m_pSndBuffer->addBuffer(data, size, mctrl.msgttl, mctrl.inorder, mctrl.srctime, Ref(seqno), Ref(mctrl.msgno));
+    m_iSndNextSeqNo = seqno;
+
+    LOGC(dlog.Debug) << CONID() << "sock:SENDING srctime: " << mctrl.srctime << "us DATA SIZE: " << size << " SEQUENCE: " << seqno;
 
     // insert this socket to the snd list if it is not on the list yet
     m_pSndQueue->m_pSndUList->update(this, CSndUList::rescheduleIf(bCongestion));
@@ -6976,6 +7006,7 @@ void CUDT::updateAfterSrtHandshake(int srt_cmd, int hsv)
     }
 }
 
+// [[using thread("SRT:SndQ:worker")]]
 int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk)
 {
    CPacket& packet = *r_packet; // r_packet.m_iSeqNo can't be resolved
@@ -7025,27 +7056,27 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk)
       // protect m_iSndLastDataAck from updating by ACK processing
       CGuard ackguard(m_AckLock);
 
+      // XXX See comment at m_iSndLastDataAck field.
       int offset = CSeqNo::seqoff(m_iSndLastDataAck, packet.m_iSeqNo);
       if (offset < 0)
          return 0;
 
       int msglen;
 
-      payload = m_pSndBuffer->extractDataToSend(&(packet.m_pcData), offset, Ref(packet.m_iMsgNo), Ref(origintime), Ref(msglen));
+      payload = m_pSndBuffer->extractDataToSend(offset, r_packet, Ref(origintime), Ref(msglen));
 
       if (-1 == payload)
       {
          int32_t seqpair[2];
          seqpair[0] = packet.m_iSeqNo;
          seqpair[1] = CSeqNo::incseq(seqpair[0], msglen);
-         sendCtrl(UMSG_DROPREQ, &packet.m_iMsgNo, seqpair, 8);
+         sendCtrl(UMSG_DROPREQ, &packet.m_iMsgNo, seqpair, sizeof(seqpair));
 
          // only one msg drop request is necessary
          m_pSndLossList->remove(seqpair[1]);
 
          // skip all dropped packets
-         if (CSeqNo::seqcmp(m_iSndCurrSeqNo, CSeqNo::incseq(seqpair[1])) < 0)
-             m_iSndCurrSeqNo = CSeqNo::incseq(seqpair[1]);
+         m_iSndCurrSeqNo = CSeqNo::maxseq(m_iSndCurrSeqNo, CSeqNo::incseq(seqpair[1]));
 
          return 0;
       }
@@ -7092,14 +7123,21 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk)
          // It would be nice to research as to whether CSndBuffer::Block::m_iMsgNoBitset field
          // isn't a useless redundant state copy. If it is, then taking the flags here can be removed.
          kflg = m_pCryptoControl->getSndCryptoFlags();
-         if (0 != (payload = m_pSndBuffer->extractDataToSend(&(packet.m_pcData), Ref(packet.m_iMsgNo), Ref(origintime), kflg)))
+         if (0 != (payload = m_pSndBuffer->extractDataToSend(r_packet, Ref(origintime), kflg)))
          {
-            m_iSndCurrSeqNo = CSeqNo::incseq(m_iSndCurrSeqNo);
-            packet.m_iSeqNo = m_iSndCurrSeqNo;
+             // A CHANGE. The sequence number is currently added to the packet
+             // when scheduling, not when extracting. This is a inter-migration form,
+             // so still override the value, but trace it.
+             m_iSndCurrSeqNo = CSeqNo::incseq(m_iSndCurrSeqNo);
 
-            // every 16 (0xF) packets, a packet pair is sent
-            if ((packet.m_iSeqNo & PUMASK_SEQNO_PROBE) == 0)
-               probe = true;
+             LOGC(mglog.Debug) << "packData: Applying EXTRACTION sequence " << m_iSndCurrSeqNo
+                 << " over SCHEDULING sequence " << packet.m_iSeqNo
+                 << (m_iSndCurrSeqNo == packet.m_iSeqNo ? " (they are same)" : " (THEY DIFFER!)");
+             packet.m_iSeqNo = m_iSndCurrSeqNo;
+
+             // every 16 (0xF) packets, a packet pair is sent
+             if ((packet.m_iSeqNo & PUMASK_SEQNO_PROBE) == 0)
+                 probe = true;
          }
          else
          {
@@ -7142,7 +7180,10 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk)
    }
 
    packet.m_iID = m_PeerID;
-   packet.setLength(payload);
+
+   // Redundant. This is now properly set in both rexmit and normal
+   // cases just after setting the m_pcData field.
+   //packet.setLength(payload);
 
    /* Encrypt if 1st time this packet is sent and crypto is enabled */
    if (kflg)
@@ -7215,6 +7256,45 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk)
    m_ullTargetTime_tk = ts_tk;
 
    return payload;
+}
+
+bool CUDT::overrideSndSeqNo(int32_t seq, bool initial)
+{
+    // This function is predicted to be called from the socket
+    // group managmenet functions to synchronize the sequnece in
+    // all sockes in the redundancy group. THIS sequence given
+    // here is the sequence TO BE STAMPED AT THE EXACTLY NEXT
+    // sent payload. Therefore, screw up the ISN to exactly this
+    // value, and the send sequence to the value one less - because
+    // the m_iSndCurrSeqNo is increased by one immediately before
+    // stamping it to the packet.
+
+    // This function can only be called:
+    // - from the operation on an idle socket in the socket group
+    // - IMMEDIATELY after connection established and BEFORE the first payload
+    // - The corresponding socket at the peer side must be also
+    //   in this idle state!
+    if (initial)
+        m_iISN = seq;
+
+    CGuard cg(m_AckLock);
+
+    // Both the scheduling and sending sequences should be fixed.
+    // The new sequence normally should jump over several sequence numbers
+    // towards what is currently in m_iSndCurrSeqNo.
+    int diff = CSeqNo::seqcmp(seq, m_iSndNextSeqNo);
+    if (diff < 0 || diff > CSeqNo::m_iSeqNoTH)
+        return false;
+
+    m_iSndNextSeqNo = seq;
+
+    // sndCurrSeqNo will be most likely lower than m_iSndNextSeqNo because
+    // the latter is ahead with the number of packets already scheduled, but
+    // not yet sent.
+    m_iSndCurrSeqNo = CSeqNo::incseq(m_iSndCurrSeqNo, diff-1);
+
+    LOGC(mglog.Debug) << "overrideSndSeqNo: sched-seq=" << m_iSndNextSeqNo << " send-seq=" << m_iSndCurrSeqNo;
+    return true;
 }
 
 int CUDT::processData(CUnit* unit)
@@ -8187,6 +8267,10 @@ void CUDT::checkTimers()
                 // - the "ACK window" is nonempty (there are some packets sent, but not ACK-ed)
                 // - the sender loss list is empty (the receiver didn't send any LOSSREPORT, or LOSSREPORT was lost on track)
                 // Otherwise the rexmit will be done EXCLUSIVELY basing on the received LOSSREPORTs.
+
+                // XXX consider handle the "double ACK" case as LATEREXMIT, too. This would be
+                // the same kind of handling as TCP does, just SRT/file would do it only additionally
+                // to the "normal" NAK handling through UMSG_LOSSREPORT.
                 if ((CSeqNo::incseq(m_iSndCurrSeqNo) != m_iSndLastAck) && (m_pSndLossList->getLossLength() == 0))
                 {
                     // resend all unacknowledged packets on timeout, but only if there is no packet in the loss list
@@ -8428,7 +8512,8 @@ CUDTGroup::CUDTGroup():
         m_bOpened(false),
         m_ReadyRead(),
         m_iRcvDeliveredSeqNo(0),
-        m_iRcvContiguousSeqNo(0)
+        m_iRcvContiguousSeqNo(0),
+        m_iLastSchedSeqNo(0)
 {
     pthread_mutex_init(&m_GroupLock, 0);
     pthread_cond_init(&m_GroupReadAvail, 0);
@@ -8599,6 +8684,8 @@ int CUDTUnited::groupConnect(ref_t<CUDTGroup> r_g, const sockaddr_any& source_ad
     ns->m_IncludedIter = f;
     ns->m_IncludedGroup = &g;
 
+    int isn = g.currentSchedSequence();
+
     // We got it. Bind the socket, if the source address was set
     if (!source_addr.empty())
         bind(ns, source_addr);
@@ -8606,13 +8693,20 @@ int CUDTUnited::groupConnect(ref_t<CUDTGroup> r_g, const sockaddr_any& source_ad
     // And connect
     try
     {
-        connectIn(Ref(*ns), target_addr, 0); // ISN is not important here. First socket will preserve, others will derive.
+        LOGC(mglog.Debug) << "groupConnect: connecting a new socket with ISN=" << isn;
+        connectIn(Ref(*ns), target_addr, isn);
     }
     catch (...)
     {
         // Intercept to delete the socket on failure.
         delete ns;
         throw;
+    }
+
+    if (isn == 0)
+    {
+        // The first socket connects
+        g.currentSchedSequence(ns->core().ISN());
     }
 
     SRT_SOCKSTATUS st;

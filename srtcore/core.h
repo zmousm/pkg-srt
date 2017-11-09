@@ -305,6 +305,7 @@ private:
     CUDTSocket* m_ReadyRead;
     volatile int32_t m_iRcvDeliveredSeqNo; // Seq of the payload last delivered
     volatile int32_t m_iRcvContiguousSeqNo; // Seq of the freshest payload stored in the buffer with no loss-gap
+    volatile int32_t m_iLastSchedSeqNo; // represetnts the value of CUDT::m_iSndNextSeqNo for each running socket
 
     std::queue<Payload> m_PayloadQ;
     pthread_mutex_t m_PayloadLock;
@@ -317,6 +318,7 @@ public:
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRTSOCKET, peerid, m_PeerGroupID);
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, bool, managed, m_selfManaged);
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRT_GROUP_TYPE, type, m_type);
+    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, int32_t, currentSchedSequence, m_iLastSchedSeqNo);
 };
 
 
@@ -446,26 +448,8 @@ public: // internal API
     int RTT() { return m_iRTT; }
     int32_t sndSeqNo() { return m_iSndCurrSeqNo; }
 
-    void overrideSndSeqNo(int32_t seq, bool initial = true)
-    {
-        // This function is predicted to be called from the socket
-        // group managmenet functions to synchronize the sequnece in
-        // all sockes in the redundancy group. THIS sequence given
-        // here is the sequence TO BE STAMPED AT THE EXACTLY NEXT
-        // sent payload. Therefore, screw up the ISN to exactly this
-        // value, and the send sequence to the value one less - because
-        // the m_iSndCurrSeqNo is increased by one immediately before
-        // stamping it to the packet.
-
-        // This function can only be called:
-        // - from the operation on an idle socket in the socket group
-        // - IMMEDIATELY after connection established and BEFORE the first payload
-        // - The corresponding socket at the peer side must be also
-        //   in this idle state!
-        if (initial)
-            m_iISN = seq;
-        m_iSndCurrSeqNo = CSeqNo::decseq(seq);
-    }
+    int32_t schedSeqNo() { return m_iSndNextSeqNo; }
+    bool overrideSndSeqNo(int32_t seq, bool initial = true);
 
     int32_t rcvSeqNo() { return m_iRcvCurrSeqNo; }
     int flowWindowSize() { return m_iFlowWindowSize; }
@@ -549,7 +533,7 @@ private:
     static CUDTGroup& newGroup(int); // defined EXCEPTIONALLY in api.cpp for convenience reasons
     // Note: This is an "interpret" function, which should treat the tp as
     // "possibly group type" that might be out of the existing values.
-    bool interpretGroup(SRTSOCKET grp, SRT_GROUP_TYPE tp);
+    bool interpretGroup(SRTSOCKET grp, SRT_GROUP_TYPE tp, int hsreq_type_cmd);
     SRTSOCKET makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE tp);
 
     void updateAfterSrtHandshake(int srt_cmd, int hsv);
@@ -810,8 +794,31 @@ private: // Sending related data
 
     volatile int32_t m_iSndLastFullAck;          // Last full ACK received
     volatile int32_t m_iSndLastAck;              // Last ACK received
+
+    // NOTE: m_iSndLastDataAck is the value strictly bound to the CSndBufer object (m_pSndBuffer)
+    // and this is the sequence number that refers to the block at position [0]. Upon acknowledgement,
+    // this value is shifted to the acknowledged position, and the blocks are removed from the
+    // m_pSndBuffer buffer up to excluding this sequence number.
+    // XXX CONSIDER removing this field and give up the maintenance of this sequence number
+    // to the sending buffer. This way, extraction of an old packet for retransmission should
+    // require only the lost sequence number, and how to find the packet with this sequence
+    // will be up to the sending buffer.
     volatile int32_t m_iSndLastDataAck;          // The real last ACK that updates the sender buffer and loss list
-    volatile int32_t m_iSndCurrSeqNo;            // The largest sequence number that has been sent
+    volatile int32_t m_iSndCurrSeqNo;            // The largest sequence number that HAS BEEN SENT
+    volatile int32_t m_iSndNextSeqNo;            // The sequence number predicted to be placed at the currently scheduled packet
+
+    // Not important difference between Curr and Next fields:
+    // - m_iSndCurrSeqNo: this is used by SRT:SndQ:worker thread and it's operated from CUDT::packData
+    //   function only. This value represents the sequence number that has been stamped on a packet directly
+    //   before it is sent over the network.
+    // - m_iSndNextSeqNo: this is used by the user's thread and it's operated from CUDT::sendmsg2
+    //   function only. This value represents the sequence number that is PREDICTED to be stamped on the
+    //   first block out of the block series that will be scheduled for later sending over the network
+    //   out of the data passed in this function. For a special case when the length of the data is
+    //   short enough to be passed in one UDP packet (always the case for live mode), this value is
+    //   always increased by one in this call, otherwise it will be increased by the number of blocks
+    //   scheduled for sending.
+
     //int32_t m_iLastDecSeq;                       // Sequence number sent last decrease occurs (actually part of FileSmoother, formerly CUDTCC)
     int32_t m_iSndLastAck2;                      // Last ACK2 sent back
     uint64_t m_ullSndLastAck2Time;               // The time when last ACK2 was sent back
