@@ -2762,13 +2762,7 @@ void CUDT::startConnect(const sockaddr_any& serv_addr, int32_t forced_isn)
         m_iISN = m_ConnReq.m_iISN = forced_isn;
     }
 
-   // m_iLastDecSeq = m_iISN - 1; <-- purpose unknown; duplicate from FileSmoother?
-    m_iSndLastAck = m_iISN;
-    m_iSndLastDataAck = m_iISN;
-    m_iSndLastFullAck = m_iISN;
-    m_iSndCurrSeqNo = m_iISN - 1;
-    m_iSndNextSeqNo = m_iISN;
-    m_iSndLastAck2 = m_iISN;
+    setInitialSndSeq(m_iISN);
     m_ullSndLastAck2Time = CTimer::getTime();
 
     // Inform the server my configurations.
@@ -3520,13 +3514,9 @@ void CUDT::applyResponseSettings()
     int udpsize = m_iMSS - CPacket::UDP_HDR_SIZE;
     m_iMaxSRTPayloadSize = udpsize - CPacket::HDR_SIZE;
     m_iPeerISN = m_ConnRes.m_iISN;
-    m_iRcvLastAck = m_ConnRes.m_iISN;
-#ifdef ENABLE_LOGGING
-    m_iDebugPrevLastAck = m_iRcvLastAck;
-#endif
-    m_iRcvLastSkipAck = m_iRcvLastAck;
-    m_iRcvLastAckAck = m_ConnRes.m_iISN;
-    m_iRcvCurrSeqNo = m_ConnRes.m_iISN - 1;
+
+    setInitialRcvSeq(m_iPeerISN);
+
     m_PeerID = m_ConnRes.m_iID;
     memcpy(m_piSelfIP, m_ConnRes.m_piPeerIP, 16);
 
@@ -4238,13 +4228,7 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, CHandShake* hs, const CPac
 
    m_iPeerISN = hs->m_iISN;
 
-   m_iRcvLastAck = hs->m_iISN;
-#ifdef ENABLE_LOGGING
-   m_iDebugPrevLastAck = m_iRcvLastAck;
-#endif
-   m_iRcvLastSkipAck = m_iRcvLastAck;
-   m_iRcvLastAckAck = hs->m_iISN;
-   m_iRcvCurrSeqNo = hs->m_iISN - 1;
+   setInitialRcvSeq(m_iPeerISN);
 
    m_PeerID = hs->m_iID;
    hs->m_iID = m_SocketID;
@@ -4252,13 +4236,7 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, CHandShake* hs, const CPac
    // use peer's ISN and send it back for security check
    m_iISN = hs->m_iISN;
 
-   // m_iLastDecSeq = m_iISN - 1; <-- purpose unknown; duplicate from FileSmoother?
-   m_iSndLastAck = m_iISN;
-   m_iSndLastDataAck = m_iISN;
-   m_iSndLastFullAck = m_iISN;
-   m_iSndCurrSeqNo = m_iISN - 1;
-   m_iSndNextSeqNo = m_iISN;
-   m_iSndLastAck2 = m_iISN;
+   setInitialSndSeq(m_iISN);
    m_ullSndLastAck2Time = CTimer::getTime();
 
    // this is a reponse handshake
@@ -5100,6 +5078,7 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
 #endif
 
     int32_t seqno = m_iSndNextSeqNo;
+    int32_t orig_seqno = seqno;
 
     // Set this predicted next sequence to the control information.
     // It's the sequence of the FIRST (!) packet from all packets used to send
@@ -5113,7 +5092,9 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     m_pSndBuffer->addBuffer(data, size, mctrl.msgttl, mctrl.inorder, mctrl.srctime, Ref(seqno), Ref(mctrl.msgno));
     m_iSndNextSeqNo = seqno;
 
-    LOGC(dlog.Debug) << CONID() << "sock:SENDING srctime: " << mctrl.srctime << "us DATA SIZE: " << size << " SEQUENCE: " << seqno;
+    LOGC(dlog.Debug) << CONID() << "sock:SENDING srctime: " << mctrl.srctime << "us"
+        " DATA SIZE: " << size << " sched-SEQUENCE: " << orig_seqno << "(>>" << seqno << ")"
+        << " STAMP: " << BufferStamp(data, size);
 
     // insert this socket to the snd list if it is not on the list yet
     m_pSndQueue->m_pSndUList->update(this, CSndUList::rescheduleIf(bCongestion));
@@ -6871,17 +6852,22 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
       break;
 
    case UMSG_DROPREQ: //111 - Msg drop request
+
       CGuard::enterCS(m_RecvLock);
       m_pRcvBuffer->dropMsg(ctrlpkt.getMsgSeq(using_rexmit_flag), using_rexmit_flag);
       CGuard::leaveCS(m_RecvLock);
 
-      unlose(*(int32_t*)ctrlpkt.m_pcData, *(int32_t*)(ctrlpkt.m_pcData + 4));
-
-      // move forward with current recv seq no.
-      if ((CSeqNo::seqcmp(*(int32_t*)ctrlpkt.m_pcData, CSeqNo::incseq(m_iRcvCurrSeqNo)) <= 0)
-         && (CSeqNo::seqcmp(*(int32_t*)(ctrlpkt.m_pcData + 4), m_iRcvCurrSeqNo) > 0))
       {
-         m_iRcvCurrSeqNo = *(int32_t*)(ctrlpkt.m_pcData + 4);
+          int32_t* dropdata = (int32_t*)ctrlpkt.m_pcData;
+
+          unlose(dropdata[0], dropdata[1]);
+
+          // move forward with current recv seq no.
+          if ((CSeqNo::seqcmp(dropdata[0], CSeqNo::incseq(m_iRcvCurrSeqNo)) <= 0)
+                  && (CSeqNo::seqcmp(dropdata[1], m_iRcvCurrSeqNo) > 0))
+          {
+              m_iRcvCurrSeqNo = dropdata[1];
+          }
       }
 
       break;
@@ -7059,7 +7045,19 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk)
       // XXX See comment at m_iSndLastDataAck field.
       int offset = CSeqNo::seqoff(m_iSndLastDataAck, packet.m_iSeqNo);
       if (offset < 0)
+      {
+          // No matter whether this is right or not (maybe the attack case should be
+          // considered, and some LOSSREPORT flood prevention), send the drop request
+          // to the peer.
+         int32_t seqpair[2];
+         seqpair[0] = packet.m_iSeqNo;
+         seqpair[1] = m_iSndLastDataAck;
+
+          LOGC(mglog.Debug) << "PEER reported LOSS not from the sending buffer - requesting DROP: "
+              << seqpair[0] << " - " << seqpair[1] << "(" << (-offset) << " packets)";
+         sendCtrl(UMSG_DROPREQ, &packet.m_iMsgNo, seqpair, sizeof(seqpair));
          return 0;
+      }
 
       int msglen;
 
@@ -7130,10 +7128,62 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk)
              // so still override the value, but trace it.
              m_iSndCurrSeqNo = CSeqNo::incseq(m_iSndCurrSeqNo);
 
-             LOGC(mglog.Debug) << "packData: Applying EXTRACTION sequence " << m_iSndCurrSeqNo
-                 << " over SCHEDULING sequence " << packet.m_iSeqNo
-                 << (m_iSndCurrSeqNo == packet.m_iSeqNo ? " (they are same)" : " (THEY DIFFER!)");
-             packet.m_iSeqNo = m_iSndCurrSeqNo;
+             // Do this checking only for groups and only at the very first moment,
+             // when there's still nothing in the buffer. Otherwise there will be
+             // a serious data discrepancy between the agent and the peer.
+             // After increasing by 1, but being previously set as ISN-1, this should be == ISN,
+             // if this is the very first packet to send.
+             if (m_parent->m_IncludedGroup && m_iSndCurrSeqNo != packet.m_iSeqNo && m_iSndCurrSeqNo == m_iISN)
+             {
+                 int seqdiff = CSeqNo::seqcmp(packet.m_iSeqNo, m_iSndCurrSeqNo);
+
+                 LOGC(mglog.Debug) << CONID() << "packData: Fixing EXTRACTION sequence " << m_iSndCurrSeqNo
+                     << " from SCHEDULING sequence " << packet.m_iSeqNo
+                     << " DIFF: " << seqdiff << " STAMP:" << BufferStamp(packet.m_pcData, packet.getLength());
+
+                 // This is the very first packet to be sent; so there's nothing in
+                 // the sending buffer yet, and therefore we are in a situation as just
+                 // after connection. No packets in the buffer, no packets are sent,
+                 // no ACK to be awaited. We can screw up all the variables that are
+                 // initialized from ISN just after connection.
+                 //
+                 // Additionally send the drop request to the peer so that it
+                 // won't stupidly request the packets to be retransmitted.
+                 // Don't do it if the difference isn't positive or exceeds the threshold.
+                 if (seqdiff > 0)
+                 {
+                     int32_t seqpair[2];
+                     seqpair[0] = m_iSndCurrSeqNo;
+                     seqpair[1] = packet.m_iSeqNo;
+                     LOGC(mglog.Debug) << "... sending INITIAL PACKET DROP due to ISN fix: "
+                         << seqpair[0] << " - " << seqpair[1] << "(" << seqdiff << " packets)";
+                     sendCtrl(UMSG_DROPREQ, &packet.m_iMsgNo, seqpair, sizeof(seqpair));
+
+                     // In case when this message is lost, the peer will still get the
+                     // UMSG_DROPREQ message when the agent realizes that the requested
+                     // packet are not present in the buffer (preadte the send buffer).
+                 }
+                 //
+                 // The peer will have to do the same, as a reaction on perceived
+                 // packet loss. When it recognizes that this initial screwing up
+                 // has happened, it should simply ignore the loss and go on.
+                 // ISN isn't being changed here - it doesn't make much sense now.
+                 setInitialSndSeq(CSeqNo::incseq(packet.m_iSeqNo), false);
+
+             }
+             else
+             {
+                LOGC(mglog.Debug) << CONID() << "packData: Applying EXTRACTION sequence " << m_iSndCurrSeqNo
+                     << " over SCHEDULING sequence " << packet.m_iSeqNo
+                     << " DIFF: " << CSeqNo::seqcmp(m_iSndCurrSeqNo, packet.m_iSeqNo)
+                     << " STAMP:" << BufferStamp(packet.m_pcData, packet.getLength());
+
+                LOGC(mglog.Debug) << "... CONDITION: IN GROUP: " << (m_parent->m_IncludedGroup ? "yes":"no")
+                    << " extraction-seq=" << m_iSndCurrSeqNo << " scheduling-seq=" << packet.m_iSeqNo << " ISN=" << m_iISN;
+
+                // Do this always when not in a group, 
+                packet.m_iSeqNo = m_iSndCurrSeqNo;
+             }
 
              // every 16 (0xF) packets, a packet pair is sent
              if ((packet.m_iSeqNo & PUMASK_SEQNO_PROBE) == 0)
@@ -7258,7 +7308,7 @@ int CUDT::packData(ref_t<CPacket> r_packet, ref_t<uint64_t> r_ts_tk)
    return payload;
 }
 
-bool CUDT::overrideSndSeqNo(int32_t seq, bool initial)
+bool CUDT::overrideSndSeqNo(int32_t seq)
 {
     // This function is predicted to be called from the socket
     // group managmenet functions to synchronize the sequnece in
@@ -7274,8 +7324,6 @@ bool CUDT::overrideSndSeqNo(int32_t seq, bool initial)
     // - IMMEDIATELY after connection established and BEFORE the first payload
     // - The corresponding socket at the peer side must be also
     //   in this idle state!
-    if (initial)
-        m_iISN = seq;
 
     CGuard cg(m_AckLock);
 
@@ -7287,13 +7335,13 @@ bool CUDT::overrideSndSeqNo(int32_t seq, bool initial)
         return false;
 
     m_iSndNextSeqNo = seq;
-
-    // sndCurrSeqNo will be most likely lower than m_iSndNextSeqNo because
+    // m_iSndCurrSeqNo will be most likely lower than m_iSndNextSeqNo because
     // the latter is ahead with the number of packets already scheduled, but
     // not yet sent.
-    m_iSndCurrSeqNo = CSeqNo::incseq(m_iSndCurrSeqNo, diff-1);
 
-    LOGC(mglog.Debug) << "overrideSndSeqNo: sched-seq=" << m_iSndNextSeqNo << " send-seq=" << m_iSndCurrSeqNo;
+    LOGC(mglog.Debug) << CONID() << "overrideSndSeqNo: sched-seq=" << m_iSndNextSeqNo << " send-seq=" << m_iSndCurrSeqNo
+        << " (unchanged)"
+        ;
     return true;
 }
 

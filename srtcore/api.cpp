@@ -2635,8 +2635,8 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
     for (vector<gli_t>::iterator i = idlers.begin(); i != idlers.end(); ++i)
     {
         gli_t d = *i;
-        int lastseq = d->ps->core().sndSeqNo();
-        if (curseq != 0)
+        int lastseq = d->ps->core().schedSeqNo();
+        if (curseq != 0 && curseq != lastseq)
         {
             LOGC(mglog.Debug) << "CUDTGroup::send: socket %" << d->id
                 << ": override snd sequence " << lastseq
