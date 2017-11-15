@@ -5086,14 +5086,18 @@ int CUDT::sendmsg2(const char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
     // have one packet per buffer (as it's in live mode).
     mctrl.pktseq = seqno;
 
+    LOGC(dlog.Debug) << CONID() << "sock:SENDING (BEFORE) srctime:" << logging::FormatTime(mctrl.srctime)
+        << " DATA SIZE: " << size << " sched-SEQUENCE: " << seqno
+        << " STAMP: " << BufferStamp(data, size);
+
     // seqno is INPUT-OUTPUT value:
     // - INPUT: the current sequence number to be placed for the next scheduled packet
     // - OUTPUT: value of the sequence number to be put on the first packet at the next sendmsg2 call.
     m_pSndBuffer->addBuffer(data, size, mctrl.msgttl, mctrl.inorder, mctrl.srctime, Ref(seqno), Ref(mctrl.msgno));
     m_iSndNextSeqNo = seqno;
 
-    LOGC(dlog.Debug) << CONID() << "sock:SENDING srctime: " << mctrl.srctime << "us"
-        " DATA SIZE: " << size << " sched-SEQUENCE: " << orig_seqno << "(>>" << seqno << ")"
+    LOGC(dlog.Debug) << CONID() << "sock:SENDING srctime:" << logging::FormatTime(mctrl.srctime)
+        << " DATA SIZE: " << size << " sched-SEQUENCE: " << orig_seqno << "(>>" << seqno << ")"
         << " STAMP: " << BufferStamp(data, size);
 
     // insert this socket to the snd list if it is not on the list yet
@@ -9071,7 +9075,7 @@ void CUDTGroup::readerThread()
             {
                 // If less data were returned, remove the excess buffer from the size.
                 pl.data.resize(pl.result);
-                LOGC(dlog.Debug) << "GROUP:recv:%" << s->m_SocketID << " size=" << pl.result
+                LOGC(dlog.Debug) << "GROUP:recv:%" << s->m_SocketID << " size=" << pl.result << " #" << pl.ctrl.pktseq
                     << " SRC.TS=" <<  logging::FormatTime(pl.ctrl.srctime) << " STAMP:" << BufferStamp(&pl.data[0], pl.data.size());
 
 
