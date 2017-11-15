@@ -9058,6 +9058,7 @@ void CUDTGroup::readerThread()
             pl.data.resize(m_iMaxPayloadSize);
             // Do read from it.
             pl.result = s->m_Core.receiveMessage(&pl.data[0], m_iMaxPayloadSize, Ref(pl.ctrl));
+            s->m_IncludedIter->laststatus = s->getStatus();
 
             // Access the group-characteristic data of the socket. Clear the reading.
             s->m_IncludedIter->ready_read = false;
@@ -9070,12 +9071,15 @@ void CUDTGroup::readerThread()
             {
                 // If less data were returned, remove the excess buffer from the size.
                 pl.data.resize(pl.result);
+                LOGC(dlog.Debug) << "GROUP:recv:%" << s->m_SocketID << " size=" << pl.result
+                    << " SRC.TS=" <<  logging::FormatTime(pl.ctrl.srctime) << " STAMP:" << BufferStamp(&pl.data[0], pl.data.size());
+
 
                 if (!running)
                 {
                     // Take the sequence whatever it is, as a good deal.
                     m_iRcvDeliveredSeqNo = pl.ctrl.pktseq;
-                    LOGC(mglog.Debug) << "GROUP: first packet - taking sequence as a good deal: #" << m_iRcvDeliveredSeqNo;
+                    LOGC(mglog.Debug) << "GROUP: first packet - good deal: #" << m_iRcvDeliveredSeqNo;
                     running = true;
                 }
                 else
@@ -9107,8 +9111,10 @@ void CUDTGroup::readerThread()
                         // time on the packet, just to buffer one packet.
                         //
                         // Currently just inform about that the packet was jumped over.
-                        LOGC(mglog.Warn) << "GROUP: aheadcoming; DROPSEQ: " << seq_exp << "-" << CSeqNo::decseq(pl.ctrl.pktseq);
-                        m_iRcvDeliveredSeqNo = pl.ctrl.pktseq;
+                        LOGC(mglog.Warn) << "GROUP: aheadcoming: expected=" << seq_exp << " have=" << pl.ctrl.pktseq
+                            << " diff=" << seqdiff << " - IGNORING PACKET.";
+                        // m_iRcvDeliveredSeqNo = pl.ctrl.pktseq; < --- to force-drop packets
+                        again = true;
                     }
                 }
             }
