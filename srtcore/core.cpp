@@ -2676,7 +2676,12 @@ bool CUDT::interpretGroup(const int32_t groupdata[], int hsreq_type_cmd)
         LOGC(mglog.Debug) << "HS/GROUP: master reported as %" << master_peerid
             << " distant to slave: " << tdiff << "ms - setting peer start time: " << logging::FormatTime(new_start_time)
             << " (fixed by " << (m_ullRcvPeerStartTime - new_start_time) << "ms)";
+
         m_ullRcvPeerStartTime = new_start_time;
+        // m_ullRcvPeerStartTime: this state has two indicators, one here, the other in the
+        // CRcvBuffer object. This one is the master indicator that is being set during
+        // the handshake, the below function synchronizes it to the CRcvBuffer object.
+        updateSrtRcvSettings();
     }
 
     m_parent->m_IncludedGroup->debugGroup();
