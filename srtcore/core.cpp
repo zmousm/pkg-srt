@@ -1662,13 +1662,14 @@ bool CUDT::createSrtHandshake(ref_t<CPacket> r_pkt, ref_t<CHandShake> r_hs,
         {
             master_peerid = -1;
             master_tdiff = 0;
+            LOGC(mglog.Debug) << CONID() << "NO GROUP MASTER LINK found for group: %" << m_parent->m_IncludedGroup->id();
         }
         else
         {
             // The returned master_st is the master's start time. Calculate the
             // differene time.
             master_tdiff = m_StartTime - master_st;
-            LOGC(mglog.Debug) << "FOUND GROUP MASTER LINK: peer=%" << master_peerid << " - start time diff: " << master_tdiff;
+            LOGC(mglog.Debug) << CONID() << "FOUND GROUP MASTER LINK: peer=%" << master_peerid << " - start time diff: " << master_tdiff;
         }
         // (this function will not fill the variables with anything, if no master is found)
 
