@@ -4363,7 +4363,8 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, CHandShake* hs, const CPac
 
    int udpsize = m_iMSS - CPacket::UDP_HDR_SIZE;
    m_iMaxSRTPayloadSize = udpsize - CPacket::HDR_SIZE;
-   LOGC(mglog.Debug) << "acceptAndRespond: PAYLOAD SIZE: " << m_iMaxSRTPayloadSize;
+   LOGC(mglog.Debug) << "acceptAndRespond: DATA plsize=" << m_iMaxSRTPayloadSize << " flw=" << m_iFlowWindowSize
+       << " peerid=" << m_PeerID;
 
    // Prepare all structures
    prepareConnectionObjects(*hs, HSD_DRAW, 0);

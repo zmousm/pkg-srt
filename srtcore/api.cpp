@@ -491,6 +491,8 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
     ns->m_PeerID = hs->m_iID;
     ns->m_iISN = hs->m_iISN;
 
+    LOGC(mglog.Debug) << "newConnection: DATA: lsnid=" << listen << " id=" << ns->m_Core.m_SocketID << " peerid=" << ns->m_PeerID << " ISN=" << ns->m_iISN;
+
     int error = 0;
 
     // These can throw exception only when the memory allocation failed.
