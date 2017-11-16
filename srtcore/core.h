@@ -131,6 +131,18 @@ enum AckDataItem
 };
 const size_t ACKD_FIELD_SIZE = sizeof(int32_t);
 
+enum GroupDataItem
+{
+    GRPD_GROUPID,
+    GRPD_GROUPTYPE,
+    GRPD_MASTERID,
+    GRPD_MASTERTDIFF,
+    /// end
+    GRPD__SIZE
+};
+
+const size_t GRPD_FIELD_SIZE = sizeof(int32_t);
+
 // For HSv4 legacy handshake
 #define SRT_MAX_HSRETRY     10          /* Maximum SRT handshake retry */
 
@@ -264,6 +276,8 @@ public:
     void getOpt(SRT_SOCKOPT optName, void* optval, ref_t<int> optlen);
 
     SRT_SOCKSTATUS getStatus();
+
+    bool getMasterData(SRTSOCKET slave, ref_t<SRTSOCKET> mpeer, ref_t<uint64_t> start_time);
 
 private:
     // Check if there's at least one connected socket.
@@ -533,7 +547,7 @@ private:
     static CUDTGroup& newGroup(int); // defined EXCEPTIONALLY in api.cpp for convenience reasons
     // Note: This is an "interpret" function, which should treat the tp as
     // "possibly group type" that might be out of the existing values.
-    bool interpretGroup(SRTSOCKET grp, SRT_GROUP_TYPE tp, int hsreq_type_cmd);
+    bool interpretGroup(const int32_t grpdata[], int hsreq_type_cmd);
     SRTSOCKET makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE tp);
 
     void updateAfterSrtHandshake(int srt_cmd, int hsv);
@@ -676,6 +690,10 @@ private:
         return m_iSndBufSize - m_pSndBuffer->getCurrBufSize();
     }
 
+    uint64_t socketStartTime()
+    {
+        return m_StartTime;
+    }
 
     // TSBPD thread main function.
     static void* tsbpd(void* param);
