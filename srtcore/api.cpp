@@ -488,10 +488,13 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
 
     ns->m_ListenSocket = listen;
     ns->m_Core.m_SocketID = ns->m_SocketID;
-    ns->m_PeerID = hs->m_iID;
+    ns->m_Core.m_PeerID = hs->m_iID;
     ns->m_iISN = hs->m_iISN;
 
-    LOGC(mglog.Debug) << "newConnection: DATA: lsnid=" << listen << " id=" << ns->m_Core.m_SocketID << " peerid=" << ns->m_PeerID << " ISN=" << ns->m_iISN;
+    LOGC(mglog.Debug) << "newConnection: DATA: lsnid=" << listen
+        << " id=" << ns->m_Core.m_SocketID
+        << " peerid=" << ns->m_Core.m_PeerID
+        << " ISN=" << ns->m_iISN;
 
     int error = 0;
 
@@ -553,7 +556,7 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
     {
         LOGC(mglog.Debug).form(
                 "newConnection: mapping peer %d to that socket (%d)\n",
-                ns->m_PeerID, ns->m_SocketID);
+                ns->m_Core.m_PeerID, ns->m_SocketID);
         m_PeerRec[ns->getPeerSpec()].insert(ns->m_SocketID);
     }
     catch (...)

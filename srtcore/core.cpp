@@ -2678,10 +2678,26 @@ bool CUDT::interpretGroup(const int32_t groupdata[], int hsreq_type_cmd)
         m_ullRcvPeerStartTime = new_start_time;
     }
 
+    m_parent->m_IncludedGroup->debugGroup();
+
     // That's all. For specific things concerning group
     // types, this will be later.
     return true;
 }
+
+#if ENABLE_LOGGING
+void CUDTGroup::debugGroup()
+{
+    CGuard gg(m_GroupLock);
+
+    LOGC(mglog.Debug) << "GROUP MEMBER STATUS - %" << id();
+
+    for (gli_t gi = m_Group.begin(); gi != m_Group.end(); ++gi)
+    {
+        LOGC(mglog.Debug) << " ... id=%" << gi->id << " peer=%" << gi->ps->core().m_PeerID;
+    }
+}
+#endif
 
 SRTSOCKET CUDT::makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE gtp)
 {
@@ -2742,7 +2758,7 @@ bool CUDTGroup::getMasterData(SRTSOCKET slave, ref_t<SRTSOCKET> r_mpeer, ref_t<u
             // Found it. Get the socket's peer's ID and this socket's
             // Start Time. Once it's delivered, this can be used to calculate
             // the Master-to-Slave start time difference.
-            *r_mpeer = gi->ps->m_PeerID;
+            *r_mpeer = gi->ps->core().m_PeerID;
             *r_st = gi->ps->core().socketStartTime();
             LOGC(mglog.Debug) << "getMasterData: found RUNNING master %" << gi->id
                 << " - reporting master's peer %" << *r_mpeer << " starting at "
@@ -2765,7 +2781,7 @@ bool CUDTGroup::getMasterData(SRTSOCKET slave, ref_t<SRTSOCKET> r_mpeer, ref_t<u
         // Found it. Get the socket's peer's ID and this socket's
         // Start Time. Once it's delivered, this can be used to calculate
         // the Master-to-Slave start time difference.
-        *r_mpeer = gi->ps->m_PeerID;
+        *r_mpeer = gi->ps->core().m_PeerID;
         *r_st = gi->ps->core().socketStartTime();
         LOGC(mglog.Debug) << "getMasterData: found IDLE/PENDING master %" << gi->id
             << " - reporting master's peer %" << *r_mpeer << " starting at "
@@ -3631,7 +3647,7 @@ void CUDT::applyResponseSettings()
         << " mss=" << m_ConnRes.m_iMSS
         << " flw=" << m_ConnRes.m_iFlightFlagSize
         << " isn=" << m_ConnRes.m_iISN
-        << " peerID=" << m_ConnRes.m_iID;
+        << " peerid=" << m_ConnRes.m_iID;
 }
 
 EConnectStatus CUDT::postConnect(const CPacket& response, bool rendezvous, CUDTException* eout, bool synchro)

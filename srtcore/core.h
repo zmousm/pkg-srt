@@ -279,6 +279,11 @@ public:
 
     bool getMasterData(SRTSOCKET slave, ref_t<SRTSOCKET> mpeer, ref_t<uint64_t> start_time);
 
+#if ENABLE_LOGGING
+    void debugGroup();
+#else
+    void debugGroup() {}
+#endif
 private:
     // Check if there's at least one connected socket.
     // If so, grab the status of all member sockets.

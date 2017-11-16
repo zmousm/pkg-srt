@@ -89,7 +89,6 @@ public:
        m_SocketID(0),
        m_ListenSocket(0),
        m_IncludedGroup(),
-       m_PeerID(0),
        m_iISN(0),
        m_Core(this),
        m_AcceptCond(),
@@ -106,7 +105,6 @@ public:
        m_SocketID(0),
        m_ListenSocket(0),
        m_IncludedGroup(),
-       m_PeerID(0),
        m_iISN(0),
        m_Core(this, listener_core),
        m_AcceptCond(),
@@ -133,7 +131,6 @@ public:
    CUDTGroup::gli_t m_IncludedIter;
    CUDTGroup* m_IncludedGroup;
 
-   SRTSOCKET m_PeerID;                       //< peer socket ID
    int32_t m_iISN;                           //< initial sequence number, used to tell different connection from same IP:port
 
    CUDT m_Core;                             //< pointer to the UDT entity
@@ -158,7 +155,7 @@ public:
    }
    int64_t getPeerSpec()
    {
-       return getPeerSpec(m_PeerID, m_iISN);
+       return getPeerSpec(m_Core.m_PeerID, m_iISN);
    }
 
    SRT_SOCKSTATUS getStatus();
