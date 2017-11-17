@@ -158,6 +158,7 @@ enum EConnectStatus
     CONN_REJECT = -1,    // Error during processing handshake.
     CONN_CONTINUE = 1,   // induction->conclusion phase
     CONN_RENDEZVOUS = 2, // pass to a separate rendezvous processing (HSv5 only)
+    CONN_RUNNING = 10,   // no connection in progress, already connected
     CONN_AGAIN = -2      // No data was read, don't change any state.
 };
 

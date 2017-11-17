@@ -1068,7 +1068,7 @@ bool CRcvBuffer::getRcvFirstMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<bool> r_passa
 bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpktseq)
 {
     *tsbpdtime = 0;
-    int rmpkts = 0; 
+    int rmpkts = 0;
     int rmbytes = 0;
 
     string reason = "NOT RECEIVED";
@@ -1096,7 +1096,7 @@ bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpkt
             int64_t towait = (*tsbpdtime - CTimer::getTime());
             if (towait > 0)
             {
-                LOGC(mglog.Debug) << "getRcvReadyMsg: found packet, but not ready to play (only in " << (towait/1000.0) << "ms)";
+                LOGC(mglog.Debug) << "getRcvReadyMsg: packet seq=" << curpktseq.get() << " NOT ready to play (only in " << (towait/1000.0) << "ms)";
                 return false;
             }
 

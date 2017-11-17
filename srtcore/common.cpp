@@ -792,15 +792,13 @@ std::string MessageTypeStr(UDTMessageType mt, uint32_t extt)
 
 std::string ConnectStatusStr(EConnectStatus cst)
 {
-    return (cst == CONN_CONTINUE
-        ? "INDUCED/CONCLUDING"
-        : cst == CONN_ACCEPT
-        ? "ACCEPTED"
-        : cst == CONN_RENDEZVOUS
-        ? "RENDEZVOUS (HSv5)"
-        : cst == CONN_AGAIN
-        ? "AGAIN"
-        : "REJECTED");
+    return
+          cst == CONN_CONTINUE ? "INDUCED/CONCLUDING"
+        : cst == CONN_RUNNING ? "RUNNING"
+        : cst == CONN_ACCEPT ? "ACCEPTED"
+        : cst == CONN_RENDEZVOUS ? "RENDEZVOUS (HSv5)"
+        : cst == CONN_AGAIN ? "AGAIN"
+        : "REJECTED";
 }
 
 std::string TransmissionEventStr(ETransmissionEvent ev)

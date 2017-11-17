@@ -5947,7 +5947,7 @@ bool CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
     if (!m_Smoother.ready() || !m_pSndBuffer)
     {
         bool both = !m_Smoother.ready() && !m_pSndBuffer;
-        LOGC(mglog.Error) << "updateCC: CAN'T DO UPDATE - smoother "
+        LOGC(mglog.Error) << CONID() << "updateCC: CAN'T DO UPDATE - smoother "
             << (m_Smoother.ready() ? "ready" : "NOT READY")
             << (both ? ", and " : ", but ")
             << " sending buffer "
@@ -5956,7 +5956,7 @@ bool CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
         return false;
     }
 
-    LOGC(mglog.Debug) << "updateCC: EVENT:" << TransmissionEventStr(evt);
+    LOGC(mglog.Debug) << CONID() << "updateCC: EVENT:" << TransmissionEventStr(evt);
 
     if (evt == TEV_INIT)
     {
@@ -5969,7 +5969,7 @@ bool CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
 
         if (only_input && m_llMaxBW)
         {
-            LOGC(mglog.Debug) << "updateCC/TEV_INIT: non-RESET stage and m_llMaxBW already set to " << m_llMaxBW;
+            LOGC(mglog.Debug) << CONID() << "updateCC/TEV_INIT: non-RESET stage and m_llMaxBW already set to " << m_llMaxBW;
             // Don't change
         }
         else // either m_llMaxBW == 0 or only_input == TEV_INIT_RESET
@@ -5997,7 +5997,7 @@ bool CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
                 m_pSndBuffer->setInputRateSmpPeriod(bw == 0 ? 500000 : 0);
             }
 
-            LOGC(mglog.Debug) << "updateCC/TEV_INIT: updating BW=" << m_llMaxBW
+            LOGC(mglog.Debug) << CONID() << "updateCC/TEV_INIT: updating BW=" << m_llMaxBW
                 << (only_input == TEV_INIT_RESET ? " (UNCHANGED)"
                         : only_input == TEV_INIT_OHEADBW ? " (only Overhead)": " (updated sampling rate)");
         }
@@ -6034,7 +6034,7 @@ bool CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
         }
     }
 
-    LOGC(mglog.Debug) << "udpateCC: emitting signal for EVENT:" << TransmissionEventStr(evt);
+    LOGC(mglog.Debug) << CONID() << "updateCC: emitting signal for EVENT:" << TransmissionEventStr(evt);
 
     // Now execute a smoother-defined action for that event.
     EmitSignal(evt, arg);
@@ -6050,7 +6050,7 @@ bool CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
         m_ullInterval_tk = (uint64_t)(m_Smoother->pktSndPeriod_us() * m_ullCPUFrequency);
         m_dCongestionWindow = m_Smoother->cgWindowSize();
 #if ENABLE_LOGGING
-        LOGC(mglog.Debug) << "updateCC: updated values from smoother: interval=" << m_ullInterval_tk
+        LOGC(mglog.Debug) << CONID() << "updateCC: updated values from smoother: interval=" << m_ullInterval_tk
             << "tk (" << m_Smoother->pktSndPeriod_us() << "us) cgwindow="
             << std::setprecision(3) << m_dCongestionWindow;
 #endif
@@ -7539,9 +7539,20 @@ int CUDT::processData(CUnit* unit)
 #endif
    }
 
+#if ENABLE_LOGGING
+   {
+       int tsbpddelay = m_iTsbPdDelay_ms*1000; // (value passed to CRcvBuffer::setRcvTsbPdMode)
 
-   LOGC(dlog.Debug) << CONID() << "processData: RECEIVED DATA: size=" << packet.getLength() << " seq=" << packet.getSeqNo();
-   //    << "(" << rexmitstat[pktrexmitflag] << rexmit_reason << ")";
+       // It's easier to remove the latency factor from this value than to add a function
+       // that exposes the details basing on which this value is calculated.
+       uint64_t ets = m_pRcvBuffer->getPktTsbPdTime(packet.getMsgTimeStamp()) - tsbpddelay;
+
+       LOGC(dlog.Debug) << CONID() << "processData: RECEIVED DATA: size=" << packet.getLength()
+           << " seq=" << packet.getSeqNo()
+           << " ETS=" << ets
+           << " PTS=" << (ets + tsbpddelay);
+   }
+#endif
 
    updateCC(TEV_RECEIVE, &packet);
    ++ m_iPktCount;

@@ -1203,7 +1203,7 @@ EReadStatus CRcvQueue::worker_RetrieveUnit(ref_t<int32_t> r_id, ref_t<CUnit*> r_
     if (rst == RST_OK)
     {
         *r_id = r_unit->m_Packet.m_iID;
-        LOGC(mglog.Debug) << "INCOMING PACKET: BOUND=" << SockaddrToString(m_pChannel->bindAddressAny()) << " " << PacketInfo(r_unit->m_Packet);
+        LOGC(mglog.Debug) << "worker/rcv: INCOMING PACKET: BOUND=" << SockaddrToString(m_pChannel->bindAddressAny()) << " " << PacketInfo(r_unit->m_Packet);
     }
     return rst;
 }
@@ -1272,7 +1272,7 @@ EConnectStatus CRcvQueue::worker_ProcessAddressedPacket(int32_t id, CUnit* unit,
     {
         // Pass this to either async rendezvous connection,
         // or store the packet in the queue.
-        LOGC(mglog.Debug) << "worker_ProcessAddressedPacket: resending to target socket %" << id;
+        LOGC(mglog.Debug) << "worker_ProcessAddressedPacket: resending to QUEUED socket %" << id;
         return worker_TryAsyncRend_OrStore(id, unit, addr);
     }
 
@@ -1304,7 +1304,8 @@ EConnectStatus CRcvQueue::worker_ProcessAddressedPacket(int32_t id, CUnit* unit,
     u->checkTimers();
     m_pRcvUList->update(u);
 
-    return CONN_CONTINUE;
+    //return CONN_CONTINUE;
+    return CONN_RUNNING;
 }
 
 // This function responds to the fact that a packet has come
