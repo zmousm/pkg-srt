@@ -7549,8 +7549,8 @@ int CUDT::processData(CUnit* unit)
 
        LOGC(dlog.Debug) << CONID() << "processData: RECEIVED DATA: size=" << packet.getLength()
            << " seq=" << packet.getSeqNo()
-           << " ETS=" << ets
-           << " PTS=" << (ets + tsbpddelay);
+           << " ETS=" << logging::FormatTime(ets)
+           << " PTS=" << logging::FormatTime(ets + tsbpddelay);
    }
 #endif
 
