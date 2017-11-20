@@ -4189,9 +4189,8 @@ void* CUDT::tsbpd(void* param)
                  // to the direct reception queue, to be picked up by
                  // the group reading function.
 
-                 LOGC(mglog.Debug) << "tsbpd: signalReadAvail -->";
+                 LOGC(mglog.Debug) << self->CONID() << "tsbpd: signalReadAvail -->";
                  pg->signalReadAvail(self->m_parent);
-                 LOGC(mglog.Debug) << "tsbpd: signalReadAvail <--";
              }
              // Currently let's leave it signaling BOTH its own CV and the group CV.
              //else
@@ -4247,6 +4246,8 @@ void* CUDT::tsbpd(void* param)
          pthread_cond_wait(&self->m_RcvTsbPdCond, &self->m_RecvLock);
          THREAD_RESUMED();
       }
+
+      LOGC(tslog.Debug) << self->CONID() << "tsbpd: WAKE UP!!!";
    }
 
    CGuard::leaveCS(self->m_RecvLock);
