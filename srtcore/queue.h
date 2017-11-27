@@ -75,18 +75,43 @@ modified by
 #include <vector>
 
 class CUDT;
+class CUnitQueue;
 
 struct CUnit
 {
+   enum Status { FREE = 0, GOOD = 1, EXTRACTED = 2, DROPPED = 3 };
+private:
    CPacket m_Packet;		// packet
-   enum Flag { FREE = 0, GOOD = 1, PASSACK = 2, DROPPED = 3 };
-   Flag m_iFlag;			// 0: free, 1: occupied, 2: msg read but not freed (out-of-order), 3: msg dropped
+   Status m_Status;			// 0: free, 1: occupied, 2: msg read but not freed (out-of-order), 3: msg dropped
+   CUnitQueue* m_pSource;
+   uint64_t m_localTS_ms;
+
+public:
+
+   // Can't do it with a constructor because in C++03
+   // there's no possibility to call a non-default constructor
+   // when defining an array or creating a dynamic array.
+   void init(CUnitQueue* q, char* buffer)
+   {
+       m_Status = FREE;
+       m_Packet.m_pcData = buffer;
+       m_pSource = q;
+   }
+
+   CPacket& ref_packet() { return m_Packet; }
+
+   void setExtracted() { m_Status = EXTRACTED; }
+   void setDropped() { m_Status = DROPPED; }
+
+   void setGood();
+   void setFree();
+   Status status() const { return m_Status; }
 };
 
 class CUnitQueue
 {
 friend class CRcvQueue;
-friend class CRcvBuffer;
+friend class CUnit;
 
 public:
    CUnitQueue();
@@ -142,6 +167,20 @@ private:
    CUnitQueue(const CUnitQueue&);
    CUnitQueue& operator=(const CUnitQueue&);
 };
+
+
+inline void CUnit::setFree()
+{
+    m_Status = FREE;
+    -- m_pSource->m_iCount;
+}
+
+inline void CUnit::setGood()
+{
+    m_Status = GOOD;
+    ++ m_pSource->m_iCount;
+}
+
 
 struct CSNode
 {
@@ -451,6 +490,8 @@ public:
       /// @return Data size of the packet
 
    int recvfrom(int32_t id, ref_t<CPacket> packet);
+
+   pthread_t threadId() { return m_WorkerThread; }
 
 private:
    static void* worker(void* param);

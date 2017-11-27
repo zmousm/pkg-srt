@@ -70,6 +70,19 @@ modified by
 #include "utilities.h"
 #include <fstream>
 
+// The notation used for "circular numbers" in comments:
+// The "cicrular numbers" are numbers that when increased up to the
+// maximum become zero, and similarly, when the zero value is decreased,
+// it turns into the maximum value minus one. This wrapping works the
+// same for adding and subtracting. Wrapping numbers cannot be multiplied.
+
+// Operations done on these numbers are marked with additional % character:
+// a %> b : a is later than b
+// a ++% (++%a) : shift a by 1 forward
+// a +% b : shift a by b
+// a == b : equality is same as for just numbers
+
+
 class CSndBuffer
 {
 public:
@@ -224,7 +237,7 @@ public:
    // Currently just "unimplemented".
    std::string CONID() const { return ""; }
 
-   CRcvBuffer(CUnitQueue* queue, int bufsize = 65536);
+   CRcvBuffer(int bufsize = 65536);
    ~CRcvBuffer();
 
       /// Write data into the buffer.
@@ -342,7 +355,7 @@ public:
    bool isRcvDataReady();
    bool isRcvDataAvailable()
    {
-       return m_iLastAckPos != m_iStartPos;
+       return m_iReadTail != m_iReadHead;
    }
    CPacket* getRcvReadyPacket();
    bool isReadyToPlay(const CPacket* p, uint64_t& tsbpdtime);
@@ -357,7 +370,7 @@ public:
       /// Add packet timestamp for drift caclculation and compensation
       /// @param [in] timestamp packet time stamp
 
-   void addRcvTsbPdDriftSample(uint32_t timestamp, pthread_mutex_t& lock);
+   void addRcvTsbPdDriftSample(uint32_t timestamp, pthread_mutex_t& mutex_to_lock);
 
 #ifdef SRT_DEBUG_TSBPD_DRIFT
    void printDriftHistogram(int64_t iDrift);
@@ -382,8 +395,53 @@ public:
 
    void skipData(int len);
 
+   bool empty() { return m_iReadHead == m_iReadTail; }
+   bool full() { return m_iReadHead == (m_iReadTail+1)%m_iSize; }
+   int capacity() { return m_iSize; }
+
+   int refcount() { return m_iRefCount; }
+   int acquire() { return ++m_iRefCount; }
+
+   enum Whether2SelfDelete { KEEP_ORPHAN, DELETE_ORPHAN };
+
+   // Typical Usage:
+   // m_pRcvBuffer->unref(CRcvBuffer::DELETE_ORPHAN);
+   bool release(Whether2SelfDelete should_delete) // [[nullable]]
+   {
+       // Allow this method to be called also for the sake of
+       // a NULL pointer.
+       if (!this)
+           return false;
+
+       --m_iRefCount;
+       if (m_iRefCount == 0)
+       {
+           if (should_delete)
+               delete this;
+           return false;
+       }
+       return true;
+   }
+
+   // Expose the creation function because new/delete must be
+   // privatized due to the fact that this class produces shared
+   // objects now.
+   static CRcvBuffer* create(int size)
+   {
+       return new CRcvBuffer(size);
+   }
+
 
 private:
+   // Privatize operator delete. This way only friend function
+   // may use KEEP_ORPHAN. Non-trusted functions must use DELETE_ORPHAN.
+   // Note that private operator delete blocks access to effectively
+   // both 'new' and 'delete'.
+   void operator delete(void* mem)
+   {
+       ::operator delete(mem);
+   }
+
       /// Adjust receive queue to 1st ready to play message (tsbpdtime < now).
       // Parameters (of the 1st packet queue, ready to play or not):
       /// @param tsbpdtime [out] localtime-based (uSec) packet time stamp including buffering delay of 1st packet or 0 if none
@@ -416,15 +474,20 @@ private:
 private:
    bool scanMsg(ref_t<int> start, ref_t<int> end, ref_t<bool> passack);
 
-private:
-   CUnit** m_pUnit;                     // pointer to the protocol buffer
-   int m_iSize;                         // size of the protocol buffer
-   CUnitQueue* m_pUnitQueue;		// the shared unit queue
+   int shift(int basepos, int shift)
+   {
+       return (basepos + shift) % m_iSize;
+   }
 
-   int m_iStartPos;                     // the head position for I/O (inclusive)
-   int m_iLastAckPos;                   // the last ACKed position (exclusive)
-					// EMPTY: m_iStartPos = m_iLastAckPos   FULL: m_iStartPos = m_iLastAckPos + 1
-   int m_iMaxPos;			// the furthest data position
+private:
+   CUnit** m_aUnits;                 // Array of pointed units collected in the buffer
+   int m_iSize;                      // Size of the internal array
+
+   int m_iReadHead;                  // HEAD: first packet available for reading
+   int m_iReadTail;                  // contiguous-TAIL: last packet available for reading
+   int m_iPastAckDelta;              // delta between contiguous-TAIL and reception-TAIL
+   int m_iRefCount;                  // reference counter for shared buffer
+
 
    int m_iNotch;			// the starting read point of the first unit
 
@@ -437,6 +500,7 @@ private:
    bool m_bTsbPdMode;                   // true: apply TimeStamp-Based Rx Mode
    uint32_t m_uTsbPdDelay;              // aggreed delay
    uint64_t m_ullTsbPdTimeBase;         // localtime base for TsbPd mode
+   uint64_t m_ullTsbPdTimeCarryover;    // "segment shift" for a 32-bit time time that had rolled over
    // Note: m_ullTsbPdTimeBase cumulates values from:
    // 1. Initial SRT_CMD_HSREQ packet returned value diff to current time:
    //    == (NOW - PACKET_TIMESTAMP), at the time of HSREQ reception

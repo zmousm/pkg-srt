@@ -694,23 +694,23 @@ void CSndBuffer::increase()
 /*
 *   RcvBuffer (circular buffer):
 *
-*   |<------------------- m_iSize ----------------------------->|
-*   |       |<--- acked pkts -->|<--- m_iMaxPos --->|           |
-*   |       |                   |                   |           |
-*   +---+---+---+---+---+---+---+---+---+---+---+---+---+   +---+
-*   | 0 | 0 | 1 | 1 | 1 | 0 | 1 | 1 | 1 | 1 | 0 | 1 | 0 |...| 0 | m_pUnit[]
-*   +---+---+---+---+---+---+---+---+---+---+---+---+---+   +---+
+*   |<----------------------- m_iSize ----------------------------->|
+*   |       |<--- acked pkts -->|<-- m_iPastAckDelta -->|           |
+*   |       |                   |                       |           |
+*   +---+---+---+---+---+---+---+---+---+---+---+---+---+---+   +---+
+*   | 0 | 0 | 1 | 1 | 1 | 1 | 1 | 0 | 1 | 1 | 0 | 1 | 1 | 0 |...| 0 | m_aUnits[]
+*   +---+---+---+---+---+---+---+---+---+---+---+---+---+---+   +---+
 *             |                 | |               |
 *             |                   |               \__last pkt received
-*             |                   \___ m_iLastAckPos: last ack sent
-*             \___ m_iStartPos: first message to read
+*             |                   \___ m_iReadTail: last ack sent
+*             \___ m_iReadHead: first message to read
 *                      
-*   m_pUnit[i]->m_iFlag: 0:free, 1:good, 2:passack, 3:dropped
+*   m_aUnits[i]->status(): 0:free, 1:good, 2:passack, 3:dropped
 * 
 *   thread safety:
-*    m_iStartPos:   CUDT::m_RecvLock 
-*    m_iLastAckPos: CUDT::m_AckLock 
-*    m_iMaxPos:     none? (modified on add and ack
+*    m_iReadHead:   CUDT::m_RecvLock 
+*    m_iReadTail:   CUDT::m_AckLock 
+*    m_iPastAckDelta:     none? (modified on add and ack
 */
 
 
@@ -722,13 +722,13 @@ void CSndBuffer::increase()
 //const int CRcvBuffer::TSBPD_DRIFT_PRT_SAMPLES = 200;   // ACK-ACK packets
 #endif
 
-CRcvBuffer::CRcvBuffer(CUnitQueue* queue, int bufsize):
-m_pUnit(NULL),
+CRcvBuffer::CRcvBuffer(int bufsize):
+m_aUnits(NULL),
 m_iSize(bufsize),
-m_pUnitQueue(queue),
-m_iStartPos(0),
-m_iLastAckPos(0),
-m_iMaxPos(0),
+m_iReadHead(0),
+m_iReadTail(0),
+m_iPastAckDelta(0),
+m_iRefCount(1),
 m_iNotch(0)
 ,m_BytesCountLock()
 ,m_iBytesCount(0)
@@ -738,6 +738,7 @@ m_iNotch(0)
 ,m_bTsbPdMode(false)
 ,m_uTsbPdDelay(0)
 ,m_ullTsbPdTimeBase(0)
+,m_ullTsbPdTimeCarryover(0)
 ,m_bTsbPdWrapCheck(false)
 //,m_iTsbPdDrift(0)
 //,m_TsbPdDriftSum(0)
@@ -749,9 +750,9 @@ m_iNotch(0)
 ,m_iBytesCountMAvg(0)
 #endif
 {
-   m_pUnit = new CUnit* [m_iSize];
+   m_aUnits = new CUnit* [m_iSize];
    for (int i = 0; i < m_iSize; ++ i)
-      m_pUnit[i] = NULL;
+      m_aUnits[i] = NULL;
 
 #ifdef SRT_DEBUG_TSBPD_DRIFT
    memset(m_TsbPdDriftHisto100us, 0, sizeof(m_TsbPdDriftHisto100us));
@@ -765,14 +766,13 @@ CRcvBuffer::~CRcvBuffer()
 {
    for (int i = 0; i < m_iSize; ++ i)
    {
-      if (m_pUnit[i] != NULL)
+      if (m_aUnits[i] != NULL)
       {
-         m_pUnit[i]->m_iFlag = CUnit::FREE;
-         -- m_pUnitQueue->m_iCount;
+          m_aUnits[i]->setFree();
       }
    }
 
-   delete [] m_pUnit;
+   delete [] m_aUnits;
 
    pthread_mutex_destroy(&m_BytesCountLock);
 }
@@ -807,26 +807,25 @@ void CRcvBuffer::countBytes(int pkts, int bytes, bool acked)
 
 int CRcvBuffer::addData(CUnit* unit, int offset)
 {
-   int pos = (m_iLastAckPos + offset) % m_iSize;
-   if (offset >= m_iMaxPos)
-      m_iMaxPos = offset + 1;
+   int pos = shift(m_iReadTail, offset);
+   if (offset >= m_iPastAckDelta)
+      m_iPastAckDelta = offset + 1;
 
-   if (m_pUnit[pos] != NULL) {
+   if (m_aUnits[pos] != NULL) {
       return -1;
    }
-   m_pUnit[pos] = unit;
-   countBytes(1, unit->m_Packet.getLength());
+   m_aUnits[pos] = unit;
+   countBytes(1, unit->ref_packet().getLength());
 
-   unit->m_iFlag = CUnit::GOOD;
-   ++ m_pUnitQueue->m_iCount;
+   unit->setGood();
 
    return 0;
 }
 
 int CRcvBuffer::readBuffer(char* data, int len)
 {
-   int p = m_iStartPos;
-   int lastack = m_iLastAckPos;
+   int p = m_iReadHead;
+   int lastack = m_iReadTail;
    int rs = len;
    char* begin = data; // logging only
 
@@ -837,26 +836,25 @@ int CRcvBuffer::readBuffer(char* data, int len)
    {
       if (m_bTsbPdMode)
       {
-          LOGC(dlog.Debug) << CONID() << "readBuffer: chk if time2play: NOW=" << now << " PKT TS=" << getPktTsbPdTime(m_pUnit[p]->m_Packet.getMsgTimeStamp());
-          if ((getPktTsbPdTime(m_pUnit[p]->m_Packet.getMsgTimeStamp()) > now))
+          LOGC(dlog.Debug) << CONID() << "readBuffer: chk if time2play: NOW=" << now << " PKT TS=" << getPktTsbPdTime(m_aUnits[p]->ref_packet().getMsgTimeStamp());
+          if ((getPktTsbPdTime(m_aUnits[p]->ref_packet().getMsgTimeStamp()) > now))
               break; /* too early for this unit, return whatever was copied */
       }
 
-      int unitsize = m_pUnit[p]->m_Packet.getLength() - m_iNotch;
+      int unitsize = m_aUnits[p]->ref_packet().getLength() - m_iNotch;
       if (unitsize > rs)
          unitsize = rs;
 
       LOGC(dlog.Debug) << CONID() << "readBuffer: copying buffer #" << p
           << " targetpos=" << int(data-begin) << " sourcepos=" << m_iNotch << " size=" << unitsize << " left=" << (unitsize-rs);
-      memcpy(data, m_pUnit[p]->m_Packet.m_pcData + m_iNotch, unitsize);
+      memcpy(data, m_aUnits[p]->ref_packet().m_pcData + m_iNotch, unitsize);
       data += unitsize;
 
-      if ((rs > unitsize) || (rs == int(m_pUnit[p]->m_Packet.getLength()) - m_iNotch))
+      if ((rs > unitsize) || (rs == int(m_aUnits[p]->ref_packet().getLength()) - m_iNotch))
       {
-         CUnit* tmp = m_pUnit[p];
-         m_pUnit[p] = NULL;
-         tmp->m_iFlag = CUnit::FREE;
-         -- m_pUnitQueue->m_iCount;
+         CUnit* tmp = m_aUnits[p];
+         m_aUnits[p] = NULL;
+         tmp->setFree();
 
          if (++ p == m_iSize)
             p = 0;
@@ -871,33 +869,32 @@ int CRcvBuffer::readBuffer(char* data, int len)
 
    /* we removed acked bytes form receive buffer */
    countBytes(-1, -(len - rs), true);
-   m_iStartPos = p;
+   m_iReadHead = p;
 
    return len - rs;
 }
 
 int CRcvBuffer::readBufferToFile(fstream& ofs, int len)
 {
-   int p = m_iStartPos;
-   int lastack = m_iLastAckPos;
+   int p = m_iReadHead;
+   int lastack = m_iReadTail;
    int rs = len;
 
    while ((p != lastack) && (rs > 0))
    {
-      int unitsize = m_pUnit[p]->m_Packet.getLength() - m_iNotch;
+      int unitsize = m_aUnits[p]->ref_packet().getLength() - m_iNotch;
       if (unitsize > rs)
          unitsize = rs;
 
-      ofs.write(m_pUnit[p]->m_Packet.m_pcData + m_iNotch, unitsize);
+      ofs.write(m_aUnits[p]->ref_packet().m_pcData + m_iNotch, unitsize);
       if (ofs.fail())
          break;
 
-      if ((rs > unitsize) || (rs == int(m_pUnit[p]->m_Packet.getLength()) - m_iNotch))
+      if ((rs > unitsize) || (rs == int(m_aUnits[p]->ref_packet().getLength()) - m_iNotch))
       {
-         CUnit* tmp = m_pUnit[p];
-         m_pUnit[p] = NULL;
-         tmp->m_iFlag = CUnit::FREE;
-         -- m_pUnitQueue->m_iCount;
+         CUnit* tmp = m_aUnits[p];
+         m_aUnits[p] = NULL;
+         tmp->setFree();
 
          if (++ p == m_iSize)
             p = 0;
@@ -912,46 +909,69 @@ int CRcvBuffer::readBufferToFile(fstream& ofs, int len)
 
    /* we removed acked bytes form receive buffer */
    countBytes(-1, -(len - rs), true);
-   m_iStartPos = p;
+   m_iReadHead = p;
 
    return len - rs;
 }
 
 void CRcvBuffer::ackData(int len)
 {
-   {
-      int pkts = 0;
-      int bytes = 0;
-      for (int i = m_iLastAckPos, n = (m_iLastAckPos + len) % m_iSize; i != n; i = (i + 1) % m_iSize)
-      {
-          if (m_pUnit[i] != NULL)
-          {
-              pkts++;
-              bytes += m_pUnit[i]->m_Packet.getLength();
-          }
-      }
-      if (pkts > 0) countBytes(pkts, bytes, true);
-   }
-   m_iLastAckPos = (m_iLastAckPos + len) % m_iSize;
-   m_iMaxPos -= len;
-   if (m_iMaxPos < 0)
-      m_iMaxPos = 0;
+    // Move the m_iReadTail position further by 'len'.
+    // This is done regardless if there are units on that position, although
+    // the primary statement is that the range between m_iReadHead and
+    // m_iReadTail is perfectly contiguous. This might not be true in case
+    // when 'skipData' was called and therefore packets at positions where the
+    // unit is lacking is intentionally dropped.
 
-   CTimer::triggerEvent();
+    // This actually declares more packets that are considered ACK-ed
+    // and therefore available for reading.
+
+    int pkts = 0;
+    int bytes = 0;
+
+    // for (i: m_iReadTail ... m_iReadTail +% len)
+    int i_end = shift(m_iReadTail, len);
+    for (int i = m_iReadTail; i != i_end; i = shift(i, 1))
+    {
+        if (m_aUnits[i]) // have something there
+        {
+            pkts++;
+            bytes += m_aUnits[i]->ref_packet().getLength();
+        }
+    }
+    if (pkts > 0)
+    {
+        countBytes(pkts, bytes, true);
+    }
+    m_iReadTail = i_end;
+    m_iPastAckDelta -= len;
+    if (m_iPastAckDelta < 0)
+        m_iPastAckDelta = 0;
+
+    CTimer::triggerEvent();
 }
 
 void CRcvBuffer::skipData(int len)
 {
    /* 
    * Caller need protect both AckLock and RecvLock
-   * to move both m_iStartPos and m_iLastAckPost
+   * to move both m_iReadHead and m_iReadTail
    */
-   if (m_iStartPos == m_iLastAckPos)
-      m_iStartPos = (m_iStartPos + len) % m_iSize;
-   m_iLastAckPos = (m_iLastAckPos + len) % m_iSize;
-   m_iMaxPos -= len;
-   if (m_iMaxPos < 0)
-      m_iMaxPos = 0;
+
+   // This shifts FOA m_iReadTail by 'len'. If the buffer was empty, shift
+   // also m_iReadHead to the position of m_iReadTail (to keep it empty),
+   // otherwise there are some remaining data to be read from the buffer.
+
+   // The m_iPastAckDelta must stay where it is (delta to be decreased by the
+   // length), unless the m_iReadTail is to be set further than that, in which
+   // case it should also keep its position (delta to be set 0).
+
+   if (m_iReadHead == m_iReadTail)
+      m_iReadHead = shift(m_iReadHead, len);
+   m_iReadTail = shift(m_iReadTail, len);
+   m_iPastAckDelta -= len;
+   if (m_iPastAckDelta < 0)
+      m_iPastAckDelta = 0;
 }
 
 bool CRcvBuffer::getRcvFirstMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<bool> r_passack, ref_t<int32_t> r_skipseqno, ref_t<int32_t> r_curpktseq)
@@ -965,8 +985,8 @@ bool CRcvBuffer::getRcvFirstMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<bool> r_passa
     // - tsbpdtime: real time when the packet is ready to play (whether ready to play or not)
     // - passack: false (the report concerns a packet with an exactly next sequence)
     // - skipseqno == -1: no packets to skip towards the first RTP
-    // - ppkt: that exactly packet that is reported (for debugging purposes)
-    // - @return: whether the reported packet is ready to play
+    // - curpktseq: sequence number for reported packet (for debug purposes)
+    // - @return: ready (to play) or not
 
     /* Check the acknowledged packets */
     if (getRcvReadyMsg(r_tsbpdtime, r_curpktseq))
@@ -981,10 +1001,14 @@ bool CRcvBuffer::getRcvFirstMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<bool> r_passa
     // getRcvReadyMsg returned false and tsbpdtime == 0.
 
     // Below this line we have only two options:
-    // - m_iMaxPos == 0, which means that no more packets are in the buffer
-    //    - returned: tsbpdtime=0, passack=true, skipseqno=-1, ppkt=0, @return false
-    // - m_iMaxPos > 0, which means that there are packets arrived after a lost packet:
+    // - m_iPastAckDelta == 0, which means that no more packets are in the buffer
+    //    - returned: tsbpdtime=0, passack=true, skipseqno=-1, curpktseq=0, @return false
+    // - m_iPastAckDelta > 0, which means that there are packets arrived after a lost packet:
     //    - returned: tsbpdtime=PKT.TS, passack=true, skipseqno=PKT.SEQ, ppkt=PKT, @return LOCAL(PKT.TS) <= NOW
+    //
+    // (note: the "passack" range from this architecture point of view are simply packets for
+    //  which the UMSG_ACK wasn't yet sent; as in case of live mode packets get ACK-ed quickly,
+    //  it can be approximated that the first packet in the "passack" range is missing).
 
     /* 
      * No acked packets ready but caller want to know next packet to wait for
@@ -1021,10 +1045,9 @@ bool CRcvBuffer::getRcvFirstMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<bool> r_passa
     // 1. Check if the VERY FIRST PACKET is valid; if so then:
     //    - check if it's ready to play, return boolean value that marks it.
 
-    for (int i = m_iLastAckPos, n = (m_iLastAckPos + m_iMaxPos) % m_iSize; i != n; i = (i + 1) % m_iSize)
+    for (int i = m_iReadTail, n = shift(m_iReadTail, m_iPastAckDelta); i != n; i = shift(i, 1))
     {
-        if ( !m_pUnit[i]
-                || m_pUnit[i]->m_iFlag != CUnit::GOOD )
+        if ( !m_aUnits[i] || m_aUnits[i]->status() != CUnit::GOOD )
         {
             /* There are packets in the sequence not received yet */
             haslost = true;
@@ -1032,7 +1055,7 @@ bool CRcvBuffer::getRcvFirstMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<bool> r_passa
         else
         {
             /* We got the 1st valid packet */
-            *r_tsbpdtime = getPktTsbPdTime(m_pUnit[i]->m_Packet.getMsgTimeStamp());
+            *r_tsbpdtime = getPktTsbPdTime(m_aUnits[i]->ref_packet().getMsgTimeStamp());
             if (*r_tsbpdtime <= CTimer::getTime())
             {
                 /* Packet ready to play */
@@ -1042,12 +1065,12 @@ bool CRcvBuffer::getRcvFirstMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<bool> r_passa
                      * Packet stuck on non-acked side because of missing packets.
                      * Tell 1st valid packet seqno so caller can skip (drop) the missing packets.
                      */
-                    skipseqno = m_pUnit[i]->m_Packet.m_iSeqNo;
+                    skipseqno = m_aUnits[i]->ref_packet().m_iSeqNo;
                     *r_curpktseq = skipseqno;
                 }
 
                 // NOTE: if haslost is not set, it means that this is the VERY FIRST
-                // packet, that is, packet currently at pos = m_iLastAckPos. There's no
+                // packet, that is, packet currently at pos = m_iReadTail. There's no
                 // possibility that it is so otherwise because:
                 // - if this first good packet is ready to play, THIS HERE RETURNS NOW.
                 // ...
@@ -1072,27 +1095,27 @@ bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpkt
     int rmbytes = 0;
 
     string reason = "NOT RECEIVED";
-    for (int i = m_iStartPos, n = m_iLastAckPos; i != n; i = (i + 1) % m_iSize)
+    for (int i = m_iReadHead, n = m_iReadTail; i != n; i = shift(i, 1))
     {
         bool freeunit = false;
 
         /* Skip any invalid skipped/dropped packets */
-        if (m_pUnit[i] == NULL)
+        if (m_aUnits[i] == NULL)
         {
-            if (++ m_iStartPos == m_iSize)
-                m_iStartPos = 0;
+            if (++ m_iReadHead == m_iSize)
+                m_iReadHead = 0;
             continue;
         }
 
-        *curpktseq = m_pUnit[i]->m_Packet.getSeqNo();
+        *curpktseq = m_aUnits[i]->ref_packet().getSeqNo();
 
-        if (m_pUnit[i]->m_iFlag != CUnit::GOOD)
+        if (m_aUnits[i]->status() != CUnit::GOOD)
         {
             freeunit = true;
         }
         else
         {
-            *tsbpdtime = getPktTsbPdTime(m_pUnit[i]->m_Packet.getMsgTimeStamp());
+            *tsbpdtime = getPktTsbPdTime(m_aUnits[i]->ref_packet().getMsgTimeStamp());
             int64_t towait = (*tsbpdtime - CTimer::getTime());
             if (towait > 0)
             {
@@ -1100,7 +1123,7 @@ bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpkt
                 return false;
             }
 
-            if (m_pUnit[i]->m_Packet.getMsgCryptoFlags() != EK_NOENC)
+            if (m_aUnits[i]->ref_packet().getMsgCryptoFlags() != EK_NOENC)
             {
                 reason = "DECRYPTION FAILED";
                 freeunit = true; /* packet not decrypted */
@@ -1114,15 +1137,14 @@ bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpkt
 
         if (freeunit)
         {
-            CUnit* tmp = m_pUnit[i];
-            m_pUnit[i] = NULL;
+            CUnit* tmp = m_aUnits[i];
+            m_aUnits[i] = NULL;
             rmpkts++;
-            rmbytes += tmp->m_Packet.getLength();
-            tmp->m_iFlag = CUnit::FREE;
-            --m_pUnitQueue->m_iCount;
+            rmbytes += tmp->ref_packet().getLength();
+            tmp->setFree();
 
-            if (++m_iStartPos == m_iSize)
-                m_iStartPos = 0;
+            if (++m_iReadHead == m_iSize)
+                m_iReadHead = 0;
         }
     }
 
@@ -1172,13 +1194,13 @@ bool CRcvBuffer::isRcvDataReady(ref_t<uint64_t> tsbpdtime, ref_t<int32_t> curpkt
 // if m_bTsbPdMode.
 CPacket* CRcvBuffer::getRcvReadyPacket()
 {
-    for (int i = m_iStartPos, n = m_iLastAckPos; i != n; i = (i + 1) % m_iSize)
+    for (int i = m_iReadHead, n = m_iReadTail; i != n; i = shift(i, 1))
     {
         /* 
          * Skip missing packets that did not arrive in time.
          */
-        if ( m_pUnit[i] && m_pUnit[i]->m_iFlag == CUnit::GOOD )
-            return &m_pUnit[i]->m_Packet;
+        if ( m_aUnits[i] && m_aUnits[i]->status() == CUnit::GOOD )
+            return &m_aUnits[i]->ref_packet();
     }
 
     return 0;
@@ -1200,10 +1222,10 @@ int CRcvBuffer::getAvailBufSize() const
 
 int CRcvBuffer::getRcvDataSize() const
 {
-   if (m_iLastAckPos >= m_iStartPos)
-      return m_iLastAckPos - m_iStartPos;
+   if (m_iReadTail >= m_iReadHead)
+      return m_iReadTail - m_iReadHead;
 
-   return m_iSize + m_iLastAckPos - m_iStartPos;
+   return m_iSize + m_iReadTail - m_iReadHead;
 }
 
 
@@ -1263,9 +1285,9 @@ int CRcvBuffer::getRcvDataSize(int &bytes, int &timespan)
    {
       /* skip invalid entries */
       int i,n;
-      for (i = m_iStartPos, n = m_iLastAckPos; i != n; i = (i + 1) % m_iSize)
+      for (i = m_iReadHead, n = m_iReadTail; i != n; i = shift(i, 1))
       {
-         if ((NULL != m_pUnit[i]) && (CUnit::GOOD == m_pUnit[i]->m_iFlag))
+         if (m_aUnits[i] && m_aUnits[i]->status() == CUnit::GOOD)
              break;
       }
 
@@ -1273,32 +1295,32 @@ int CRcvBuffer::getRcvDataSize(int &bytes, int &timespan)
       int startpos = i;
       int endpos = n;
 
-      if (m_iLastAckPos != startpos) 
+      if (m_iReadTail != startpos)
       {
          /*
-         *     |<--- DataSpan ---->|<- m_iMaxPos ->|
+         *     |<--- DataSpan ---->|<- m_iPastAckDelta ->|
          * +---+---+---+---+---+---+---+---+---+---+---+---
-         * |   | 1 | 1 | 1 | 0 | 0 | 1 | 1 | 0 | 1 |   |     m_pUnits[]
+         * |   | 1 | 1 | 1 | 0 | 0 | 1 | 1 | 0 | 1 |   |     m_aUnits[]
          * +---+---+---+---+---+---+---+---+---+---+---+---
          *       |                   |
-         *       \_ m_iStartPos      \_ m_iLastAckPos
+         *       \_ m_iReadHead      \_ m_iReadTail
          *        
-         * m_pUnits[startpos] shall be valid (->m_iFlag==CUnit::GOOD).
-         * If m_pUnits[m_iLastAckPos-1] is not valid (NULL or ->m_iFlag!=CUnit::GOOD), 
-         * it means m_pUnits[m_iLastAckPos] is valid since a valid unit is needed to skip.
-         * Favor m_pUnits[m_iLastAckPos] if valid over [m_iLastAckPos-1] to include the whole acked interval.
+         * m_pUnits[startpos] shall be valid (->status()==CUnit::GOOD).
+         * If m_pUnits[m_iReadTail-1] is not valid (NULL or ->status()!=CUnit::GOOD), 
+         * it means m_pUnits[m_iReadTail] is valid since a valid unit is needed to skip.
+         * Favor m_pUnits[m_iReadTail] if valid over [m_iReadTail-1] to include the whole acked interval.
          */
-         if ((m_iMaxPos <= 0)
-                 || (!m_pUnit[m_iLastAckPos])
-                 || (m_pUnit[m_iLastAckPos]->m_iFlag != CUnit::GOOD))
+         if ((m_iPastAckDelta <= 0)
+                 || (!m_aUnits[m_iReadTail])
+                 || (m_aUnits[m_iReadTail]->status() != CUnit::GOOD))
          {
-            endpos = (m_iLastAckPos == 0 ? m_iSize - 1 : m_iLastAckPos - 1);
+            endpos = (m_iReadTail == 0 ? m_iSize - 1 : m_iReadTail - 1);
          }
 
-         if ((NULL != m_pUnit[endpos]) && (NULL != m_pUnit[startpos]))
+         if ((NULL != m_aUnits[endpos]) && (NULL != m_aUnits[startpos]))
          {
-            uint64_t startstamp = getPktTsbPdTime(m_pUnit[startpos]->m_Packet.getMsgTimeStamp());
-            uint64_t endstamp = getPktTsbPdTime(m_pUnit[endpos]->m_Packet.getMsgTimeStamp());
+            uint64_t startstamp = getPktTsbPdTime(m_aUnits[startpos]->ref_packet().getMsgTimeStamp());
+            uint64_t endstamp = getPktTsbPdTime(m_aUnits[endpos]->ref_packet().getMsgTimeStamp());
             /* 
             * There are sampling conditions where spantime is < 0 (big unsigned value).
             * It has been observed after changing the SRT latency from 450 to 200 on the sender.
@@ -1338,10 +1360,10 @@ int CRcvBuffer::getRcvAvgPayloadSize() const
 
 void CRcvBuffer::dropMsg(int32_t msgno, bool using_rexmit_flag)
 {
-   for (int i = m_iStartPos, n = (m_iLastAckPos + m_iMaxPos) % m_iSize; i != n; i = (i + 1) % m_iSize)
-      if ((m_pUnit[i] != NULL) 
-              && (m_pUnit[i]->m_Packet.getMsgSeq(using_rexmit_flag) == msgno))
-         m_pUnit[i]->m_iFlag = CUnit::DROPPED;
+   for (int i = m_iReadHead, n = shift(m_iReadTail, m_iPastAckDelta); i != n; i = shift(i, 1))
+      if ((m_aUnits[i] != NULL)
+              && (m_aUnits[i]->ref_packet().getMsgSeq(using_rexmit_flag) == msgno))
+         m_aUnits[i]->setDropped();
 }
 
 uint64_t CRcvBuffer::getTsbPdTimeBase(uint32_t timestamp)
@@ -1387,7 +1409,7 @@ uint64_t CRcvBuffer::getTsbPdTimeBase(uint32_t timestamp)
        {
            /* Exiting wrap check period (if for packet delivery head) */
            m_bTsbPdWrapCheck = false;
-           m_ullTsbPdTimeBase += uint64_t(CPacket::MAX_TIMESTAMP) + 1;
+           m_ullTsbPdTimeCarryover += uint64_t(CPacket::MAX_TIMESTAMP) + 1;
            tslog.Debug("tsppd wrap period ends");
        }
    }
@@ -1398,7 +1420,7 @@ uint64_t CRcvBuffer::getTsbPdTimeBase(uint32_t timestamp)
       m_bTsbPdWrapCheck = true;
       tslog.Debug("tsppd wrap period begins");
    }
-   return(m_ullTsbPdTimeBase + carryover);
+   return(m_ullTsbPdTimeBase + m_ullTsbPdTimeCarryover + carryover);
 }
 
 uint64_t CRcvBuffer::getPktTsbPdTime(uint32_t timestamp)
@@ -1524,7 +1546,7 @@ void CRcvBuffer::addRcvTsbPdDriftSample(uint32_t timestamp, pthread_mutex_t& mut
         printDriftOffset(m_DriftTracer.overdrift(), m_DriftTracer.drift());
 #endif /* SRT_DEBUG_TSBPD_DRIFT */
 
-        m_ullTsbPdTimeBase += m_DriftTracer.overdrift();
+        m_ullTsbPdTimeCarryover += m_DriftTracer.overdrift();
     }
 
     CGuard::leaveCS(mutex_to_lock);
@@ -1557,7 +1579,7 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
             // In TSBPD mode you always read one message
             // at a time and a message always fits in one UDP packet,
             // so in one "unit".
-            p = q = m_iStartPos;
+            p = q = m_iReadHead;
 
 #ifdef SRT_DEBUG_TSBPD_OUTJITTER
             uint64_t now = CTimer::getTime();
@@ -1584,8 +1606,8 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
         return 0;
 
     // This should happen just once. By 'empty' condition
-    // we have a guarantee that m_pUnit[p] exists and is valid.
-    CPacket& pkt1 = m_pUnit[p]->m_Packet;
+    // we have a guarantee that m_aUnits[p] exists and is valid.
+    CPacket& pkt1 = m_aUnits[p]->ref_packet();
 
     // This returns the sequence number and message number to
     // the API caller.
@@ -1593,15 +1615,16 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
     msgctl.msgno = pkt1.getMsgSeq();
 
     int rs = len;
-    while (p != (q + 1) % m_iSize)
+    int past_q = shift(q, 1);
+    while (p != past_q)
     {
-        int unitsize = m_pUnit[p]->m_Packet.getLength();
+        int unitsize = m_aUnits[p]->ref_packet().getLength();
         if ((rs >= 0) && (unitsize > rs))
             unitsize = rs;
 
         if (unitsize > 0)
         {
-            memcpy(data, m_pUnit[p]->m_Packet.m_pcData, unitsize);
+            memcpy(data, m_aUnits[p]->ref_packet().m_pcData, unitsize);
             data += unitsize;
             rs -= unitsize;
             /* we removed bytes form receive buffer */
@@ -1613,11 +1636,11 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
                 static uint64_t prev_now;
                 static uint64_t prev_srctime;
 
-                int32_t seq = m_pUnit[p]->m_Packet.m_iSeqNo;
+                int32_t seq = m_aUnits[p]->ref_packet().m_iSeqNo;
 
                 uint64_t nowtime = CTimer::getTime();
                 //CTimer::rdtsc(nowtime);
-                uint64_t srctime = getPktTsbPdTime(m_pUnit[p]->m_Packet.getMsgTimeStamp());
+                uint64_t srctime = getPktTsbPdTime(m_aUnits[p]->ref_packet().getMsgTimeStamp());
 
                 int64_t timediff = nowtime - srctime;
                 int64_t nowdiff = prev_now ? (nowtime - prev_now) : 0;
@@ -1632,22 +1655,24 @@ int CRcvBuffer::readMsg(char* data, int len, ref_t<SRT_MSGCTRL> r_msgctl)
 #endif
         }
 
+        // Note special case for live mode (one packet per message and TSBPD=on):
+        //  - p == q (that is, this loop passes only once)
+        //  - no passack (the unit is always removed from the buffer)
         if (!passack)
         {
-            CUnit* tmp = m_pUnit[p];
-            m_pUnit[p] = NULL;
-            tmp->m_iFlag = CUnit::FREE;
-            -- m_pUnitQueue->m_iCount;
+            CUnit* tmp = m_aUnits[p];
+            m_aUnits[p] = NULL;
+            tmp->setFree();
         }
         else
-            m_pUnit[p]->m_iFlag = CUnit::PASSACK;
+            m_aUnits[p]->setExtracted();
 
         if (++ p == m_iSize)
             p = 0;
     }
 
     if (!passack)
-        m_iStartPos = (q + 1) % m_iSize;
+        m_iReadHead = shift(q, 1);
 
     return len - rs;
 }
@@ -1659,7 +1684,7 @@ bool CRcvBuffer::scanMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> passack)
     int& q = *r_q;
 
     // empty buffer
-    if ((m_iStartPos == m_iLastAckPos) && (m_iMaxPos <= 0))
+    if ((m_iReadHead == m_iReadTail) && (m_iPastAckDelta <= 0))
     {
         LOGC(mglog.Debug) << "scanMsg: empty buffer";
         return false;
@@ -1667,22 +1692,43 @@ bool CRcvBuffer::scanMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> passack)
 
     int rmpkts = 0;
     int rmbytes = 0;
+
     //skip all bad msgs at the beginning
-    while (m_iStartPos != m_iLastAckPos)
+    // This loop rolls until the "buffer is empty" (head == tail),
+    // in particular, there's no units accessible for the reader.
+    while (m_iReadHead != m_iReadTail)
     {
         // Roll up to the first valid unit
-        if (!m_pUnit[m_iStartPos])
+        // This skips all sequences for which the packets were
+        // not received (lost, provided that if m_iReadTail %> m_iReadHead,
+        // some packets were received in between).
+        //
+        // NOTE: a possibility that there exists any "hole" in the range
+        // between HEAD and TAIL is only when the packet has been dismissed
+        // intentionally due to DROPSEQ requirement sent by the peer.
+        // (not TLPKTDROP because this works only with TSBPD=on, in which
+        // case this function isn't used to extract data from the buffer).
+        // Normally all packets between m_iReadHead and m_iReadTail should
+        // be available.
+        if (!m_aUnits[m_iReadHead])
         {
-            if (++ m_iStartPos == m_iSize)
-                m_iStartPos = 0;
+            if (++ m_iReadHead == m_iSize)
+                m_iReadHead = 0;
             continue;
         }
 
         // Note: PB_FIRST | PB_LAST == PB_SOLO.
         // testing if boundary() & PB_FIRST tests if the msg is first OR solo.
-        if ( m_pUnit[m_iStartPos]->m_iFlag == CUnit::GOOD
-                && m_pUnit[m_iStartPos]->m_Packet.getMsgBoundary() & PB_FIRST )
+        if ( m_aUnits[m_iReadHead]->status() == CUnit::GOOD
+                && m_aUnits[m_iReadHead]->ref_packet().getMsgBoundary() & PB_FIRST )
         {
+            // Ok, the situation is:
+            //
+            // |0|0|F|N|N|E|
+            //      ^
+            //       \              .
+            //     m_iReadHead
+
             bool good = true;
 
             // look ahead for the whole message
@@ -1692,25 +1738,51 @@ bool CRcvBuffer::scanMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> passack)
             // [PB_SOLO]
             // but not:
             // [PB_FIRST] NULL ...
-            // [PB_FIRST] FREE/PASSACK/DROPPED...
+            // [PB_FIRST] FREE/EXTRACTED/DROPPED...
             // If the message didn't look as expected, interrupt this.
 
-            // This begins with a message starting at m_iStartPos
-            // up to m_iLastAckPos OR until the PB_LAST message is found.
+            // the [PB_FIRST] is here locked, then this loop looks for
+            // the end of message, including checking THIS message if
+            // it's [PB_LAST] simultaneously (that is, it's [PB_SOLO]).
+
+            // This begins with a message starting at m_iReadHead
+            // up to m_iReadTail OR until the PB_LAST message is found.
             // If any of the units on this way isn't good, this OUTER loop
             // will be interrupted.
-            for (int i = m_iStartPos; i != m_iLastAckPos;)
+            for (int i = m_iReadHead; i != m_iReadTail;)
             {
-                if (!m_pUnit[i] || m_pUnit[i]->m_iFlag != CUnit::GOOD)
+                // (This condition is always false if i == m_iReadHead)
+                if (!m_aUnits[i] || m_aUnits[i]->status() != CUnit::GOOD)
                 {
+                    // This means: break level=2
+                    // (exit the loop: while (m_iReadHead != m_iReadTail))
                     good = false;
                     break;
+
+                    // This is possible only in such a case:
+                    // |0|0|F|N|0|E|
+                    //      ^   ^
+                    //       \  \=i
+                    //     m_iReadHead
+                    // Meaning: "can't extract the whole message. goto [OUT_CHECK]"
                 }
 
                 // Likewise, boundary() & PB_LAST will be satisfied for last OR solo.
-                if ( m_pUnit[i]->m_Packet.getMsgBoundary() & PB_LAST )
+                if ( m_aUnits[i]->ref_packet().getMsgBoundary() & PB_LAST )
+                {
+                    // So we are at:
+                    // |0|0|F|N|N|E|
+                    //      ^     ^
+                    //       \    \=i
+                    //     m_iReadHead
+                    // Meaning: "reached the end. goto [END_CHECK]"
                     break;
+                }
 
+                // HERE IF: the unit at [i] is good, and is NOT PB_LAST
+                // (either PB_FIRST or PB_SUBSEQUENT)
+
+                // This is i++, for circular numer up to m_iSize
                 if (++ i == m_iSize)
                     i = 0;
             }
@@ -1719,52 +1791,83 @@ bool CRcvBuffer::scanMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> passack)
                 break;
         }
 
-        CUnit* tmp = m_pUnit[m_iStartPos];
-        m_pUnit[m_iStartPos] = NULL;
-        rmpkts++;
-        rmbytes += tmp->m_Packet.getLength();
-        tmp->m_iFlag = CUnit::FREE;
-        -- m_pUnitQueue->m_iCount;
+        // [END_CHECK]
 
-        if (++ m_iStartPos == m_iSize)
-            m_iStartPos = 0;
+        // This actually deletes all units in the range
+        // between m_iReadHead and m_iReadTail. This is done only
+        // in case when [END_CHECK] was reached, which is done only
+        // in case when the unit at m_iReadHead is good and marks the
+        // beginning of the message.
+        CUnit* tmp = m_aUnits[m_iReadHead];
+        m_aUnits[m_iReadHead] = NULL;
+        rmpkts++;
+        rmbytes += tmp->ref_packet().getLength();
+        tmp->setFree();
+
+        // ++% m_iReadHead
+        if (++ m_iReadHead == m_iSize)
+            m_iReadHead = 0;
     }
+
+    // ---> [OUT_CHECK]
+    //
+    // Possible situations:
+    //
+    // - m_iReadHead == m_iReadTail (acked range empty)
+    // - m_iReadHead <% m_iReadTail, but there's no extractable full message pointed by m_iReadHead
+
     /* we removed bytes form receive buffer */
     countBytes(-rmpkts, -rmbytes, true);
 
     // Not sure if this is correct, but this above 'while' loop exits
     // under the following conditions only:
-    // - m_iStartPos == m_iLastAckPos (that makes passack = true)
+    // - m_iReadHead == m_iReadTail (that makes passack = true)
     // - found at least GOOD unit with PB_FIRST and not all messages up to PB_LAST are good,
-    //   in which case it returns with m_iStartPos <% m_iLastAckPos (earlier)
-    // Also all units that lied before m_iStartPos are removed.
+    //   in which case it returns with m_iReadHead <% m_iReadTail (earlier)
+    // Also all units that lied before m_iReadHead are removed.
 
     p = -1;                  // message head
-    q = m_iStartPos;         // message tail
-    *passack = m_iStartPos == m_iLastAckPos;
+    q = m_iReadHead;         // message tail
+    *passack = m_iReadHead == m_iReadTail;
     bool found = false;
 
     // looking for the first message
-    //>>m_pUnit[size + m_iMaxPos] is not valid 
+    //>>m_aUnits[size + m_iPastAckDelta] is not valid 
 
     // XXX Would be nice to make some very thorough refactoring here.
 
-    // This rolls by q variable from m_iStartPos up to m_iLastAckPos,
+    // This rolls by q variable from m_iReadHead up to m_iReadTail,
     // actually from the first message up to the one with PB_LAST
     // or PB_SOLO boundary.
 
-    // The 'i' variable used in this loop is just a stub, and the
-    // upper value is just to make it "virtually infinite, but with
-    // no exaggeration" (actually it makes sure that this loop does
-    // not roll more than around the whole cyclic container). This variable
-    // isn't used inside the loop at all.
+    // The 'i' variable used in this loop is just a stub and it's
+    // even hard to define the unit here. It is "shift towards
+    // m_iReadHead", so the upper value is m_iPastAckDelta + size.
+    // m_iPastAckDelta is itself relative to m_iReadTail, so
+    // the upper value is m_iPastAckDelta + difference between
+    // m_iReadTail and m_iReadHead, so that this value is relative
+    // to m_iReadHead.
+    //
+    // The 'i' value isn't used anywhere, although the 'q' value rolls
+    // in this loop in sync with 'q', with the difference that 'q' is
+    // rolled back, and 'i' is just incremented normally.
+    //
+    // This makes that this loop rolls in the range by 'q' from
+    // m_iReadHead to m_iReadHead + UPPER,
+    // where UPPER = m_iReadTail -% m_iReadHead + m_iPastAckDelta
+    // This embraces the range from the current reading head up to
+    // the last packet ever received.
+    //
+    // 'passack' is set to true when the 'q' has passed through
+    // the border of m_iReadTail and fallen into the range
+    // of unacknowledged packets.
 
-    for (int i = 0, n = m_iMaxPos + getRcvDataSize(); i < n; ++ i)
+    for (int i = 0, n = m_iPastAckDelta + getRcvDataSize(); i < n; ++ i)
     {
-        if (m_pUnit[q] && m_pUnit[q]->m_iFlag == CUnit::GOOD)
+        if (m_aUnits[q] && m_aUnits[q]->status() == CUnit::GOOD)
         {
             // Equivalent pseudocode:
-            // PacketBoundary bound = m_pUnit[q]->m_Packet.getMsgBoundary();
+            // PacketBoundary bound = m_aUnits[q]->ref_packet().getMsgBoundary();
             // if ( IsSet(bound, PB_FIRST) )
             //     p = q;
             // if ( IsSet(bound, PB_LAST) && p != -1 ) 
@@ -1773,7 +1876,7 @@ bool CRcvBuffer::scanMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> passack)
             // Not implemented this way because it uselessly check p for -1
             // also after setting it explicitly.
 
-            switch (m_pUnit[q]->m_Packet.getMsgBoundary())
+            switch (m_aUnits[q]->ref_packet().getMsgBoundary())
             {
             case PB_SOLO: // 11
                 p = q;
@@ -1804,7 +1907,7 @@ bool CRcvBuffer::scanMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> passack)
         if (found)
         {
             // the msg has to be ack'ed or it is allowed to read out of order, and was not read before
-            if (!*passack || !m_pUnit[q]->m_Packet.getMsgOrderFlag())
+            if (!*passack || !m_aUnits[q]->ref_packet().getMsgOrderFlag())
             {
                 LOGC(mglog.Debug) << "scanMsg: found next-to-broken message, delivering OUT OF ORDER.";
                 break;
@@ -1816,7 +1919,7 @@ bool CRcvBuffer::scanMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> passack)
         if (++ q == m_iSize)
             q = 0;
 
-        if (q == m_iLastAckPos)
+        if (q == m_iReadTail)
             *passack = true;
     }
 
@@ -1830,7 +1933,7 @@ bool CRcvBuffer::scanMsg(ref_t<int> r_p, ref_t<int> r_q, ref_t<bool> passack)
         // - Found no terminal packet (PB_LAST) for that message.
 
         // if the message is larger than the receiver buffer, return part of the message
-        if ((p != -1) && ((q + 1) % m_iSize == p))
+        if ((p != -1) && (shift(q, 1) == p))
         {
             LOGC(mglog.Debug) << "scanMsg: BUFFER FULL and message is INCOMPLETE. Returning PARTIAL MESSAGE.";
             found = true;

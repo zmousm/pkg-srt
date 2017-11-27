@@ -82,12 +82,15 @@ written by
 #ifdef __GNUG__
 #define SRT_ATR_UNUSED __attribute__((unused))
 #define SRT_ATR_DEPRECATED __attribute__((deprecated))
+#define SRT_ATR_WUR __attribute__((warn_unused_result))
 #elif defined(_MSC_VER)
 #define SRT_ATR_UNUSED __pragma(warning(suppress: 4100 4101))
 #define SRT_ATR_DEPRECATED __declspec((deprecated))
+#define SRT_ATR_WUR _Check_return_
 #else
 #define SRT_ATR_UNUSED
 #define SRT_ATR_DEPRECATED
+#define SRT_ATR_WUR
 #endif
 
 // These macros come from an old compatibility code

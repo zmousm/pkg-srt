@@ -107,35 +107,34 @@ CUnitQueue::~CUnitQueue()
 
 int CUnitQueue::init(int size, int mss, int version)
 {
-   CQEntry* tempq = NULL;
-   CUnit* tempu = NULL;
-   char* tempb = NULL;
+   CQEntry* queue_entry = NULL;
+   CUnit* unit_array = NULL;
+   char* buf_memory = NULL;
 
    try
    {
-      tempq = new CQEntry;
-      tempu = new CUnit [size];
-      tempb = new char [size * mss];
+      queue_entry = new CQEntry;
+      unit_array = new CUnit [size];
+      buf_memory = new char [size * mss];
    }
    catch (...)
    {
-      delete tempq;
-      delete [] tempu;
-      delete [] tempb;
+      delete queue_entry;
+      delete [] unit_array;
+      delete [] buf_memory;
 
       return -1;
    }
 
    for (int i = 0; i < size; ++ i)
    {
-      tempu[i].m_iFlag = CUnit::FREE;
-      tempu[i].m_Packet.m_pcData = tempb + i * mss;
+       unit_array[i].init(this, buf_memory + i * mss);
    }
-   tempq->m_pUnit = tempu;
-   tempq->m_pBuffer = tempb;
-   tempq->m_iSize = size;
+   queue_entry->m_pUnit = unit_array;
+   queue_entry->m_pBuffer = buf_memory;
+   queue_entry->m_iSize = size;
 
-   m_pQEntry = m_pCurrQueue = m_pLastQueue = tempq;
+   m_pQEntry = m_pCurrQueue = m_pLastQueue = queue_entry;
    m_pQEntry->m_pNext = m_pQEntry;
 
    m_pAvailUnit = m_pCurrQueue->m_pUnit;
@@ -147,6 +146,8 @@ int CUnitQueue::init(int size, int mss, int version)
    return 0;
 }
 
+// XXX High common part detected with CUnitQueue:init.
+// Consider merging.
 int CUnitQueue::increase()
 {
    // adjust/correct m_iCount
@@ -156,7 +157,7 @@ int CUnitQueue::increase()
    {
       CUnit* u = p->m_pUnit;
       for (CUnit* end = u + p->m_iSize; u != end; ++ u)
-         if (u->m_iFlag != CUnit::FREE)
+         if (u->status() != CUnit::FREE)
             ++ real_count;
 
       if (p == m_pLastQueue)
@@ -168,39 +169,38 @@ int CUnitQueue::increase()
    if (double(m_iCount) / m_iSize < 0.9)
       return -1;
 
-   CQEntry* tempq = NULL;
-   CUnit* tempu = NULL;
-   char* tempb = NULL;
+   CQEntry* queue_entry = NULL;
+   CUnit* unit_array = NULL;
+   char* buf_memory = NULL;
 
    // all queues have the same size
    int size = m_pQEntry->m_iSize;
 
    try
    {
-      tempq = new CQEntry;
-      tempu = new CUnit [size];
-      tempb = new char [size * m_iMSS];
+      queue_entry = new CQEntry;
+      unit_array = new CUnit [size];
+      buf_memory = new char [size * m_iMSS];
    }
    catch (...)
    {
-      delete tempq;
-      delete [] tempu;
-      delete [] tempb;
+      delete queue_entry;
+      delete [] unit_array;
+      delete [] buf_memory;
 
       return -1;
    }
 
    for (int i = 0; i < size; ++ i)
    {
-      tempu[i].m_iFlag = CUnit::FREE;
-      tempu[i].m_Packet.m_pcData = tempb + i * m_iMSS;
+       unit_array[i].init(this, buf_memory + i * m_iMSS);
    }
-   tempq->m_pUnit = tempu;
-   tempq->m_pBuffer = tempb;
-   tempq->m_iSize = size;
+   queue_entry->m_pUnit = unit_array;
+   queue_entry->m_pBuffer = buf_memory;
+   queue_entry->m_iSize = size;
 
-   m_pLastQueue->m_pNext = tempq;
-   m_pLastQueue = tempq;
+   m_pLastQueue->m_pNext = queue_entry;
+   m_pLastQueue = queue_entry;
    m_pLastQueue->m_pNext = m_pQEntry;
 
    m_iSize += size;
@@ -227,10 +227,10 @@ CUnit* CUnitQueue::getNextAvailUnit()
    do
    {
       for (CUnit* sentinel = m_pCurrQueue->m_pUnit + m_pCurrQueue->m_iSize - 1; m_pAvailUnit != sentinel; ++ m_pAvailUnit)
-         if (m_pAvailUnit->m_iFlag == CUnit::FREE)
+         if (m_pAvailUnit->status() == CUnit::FREE)
             return m_pAvailUnit;
 
-      if (m_pCurrQueue->m_pUnit->m_iFlag == CUnit::FREE)
+      if (m_pCurrQueue->m_pUnit->status() == CUnit::FREE)
       {
          m_pAvailUnit = m_pCurrQueue->m_pUnit;
          return m_pAvailUnit;
@@ -1128,7 +1128,7 @@ void* CRcvQueue::worker(void* param)
        // worker_TryAsyncRend_OrStore --->
        // CUDT::processAsyncConnectResponse --->
        // CUDT::processConnectResponse 
-       self->m_pRendezvousQueue->updateConnStatus(cst, unit->m_Packet);
+       self->m_pRendezvousQueue->updateConnStatus(cst, unit->ref_packet());
    }
 
    THREAD_EXIT();
@@ -1193,17 +1193,17 @@ EReadStatus CRcvQueue::worker_RetrieveUnit(ref_t<int32_t> r_id, ref_t<CUnit*> r_
         return rst == RST_ERROR ? RST_ERROR : RST_AGAIN;
     }
 
-    r_unit->m_Packet.setLength(m_iPayloadSize);
+    r_unit->ref_packet().setLength(m_iPayloadSize);
 
     // reading next incoming packet, recvfrom returns -1 is nothing has been received
     THREAD_PAUSED();
-    EReadStatus rst = m_pChannel->recvfrom(r_addr, r_unit->m_Packet);
+    EReadStatus rst = m_pChannel->recvfrom(r_addr, r_unit->ref_packet());
     THREAD_RESUMED();
 
     if (rst == RST_OK)
     {
-        *r_id = r_unit->m_Packet.m_iID;
-        LOGC(mglog.Debug) << "worker/rcv: INCOMING PACKET: BOUND=" << SockaddrToString(m_pChannel->bindAddressAny()) << " " << PacketInfo(r_unit->m_Packet);
+        *r_id = r_unit->ref_packet().m_iID;
+        LOGC(mglog.Debug) << "worker/rcv: INCOMING PACKET: BOUND=" << SockaddrToString(m_pChannel->bindAddressAny()) << " " << PacketInfo(r_unit->ref_packet());
     }
     return rst;
 }
@@ -1222,7 +1222,7 @@ EConnectStatus CRcvQueue::worker_ProcessConnectionRequest(CUnit* unit, const soc
         if (m_pListener)
         {
             LOGC(mglog.Note) << "... PASSING request from: " << SockaddrToString(addr) << " to agent:" << m_pListener->socketID();
-            listener_ret = m_pListener->processConnectRequest(addr, unit->m_Packet);
+            listener_ret = m_pListener->processConnectRequest(addr, unit->ref_packet());
             // XXX This returns some very significant return value, which
             // is completely ignored here.
             // Actually this is the only place in the code where this
@@ -1296,8 +1296,8 @@ EConnectStatus CRcvQueue::worker_ProcessAddressedPacket(int32_t id, CUnit* unit,
         return CONN_REJECT;
     }
 
-    if (unit->m_Packet.isControl())
-        u->processCtrl(unit->m_Packet);
+    if (unit->ref_packet().isControl())
+        u->processCtrl(unit->ref_packet());
     else
         u->processData(unit);
 
@@ -1345,12 +1345,12 @@ EConnectStatus CRcvQueue::worker_TryAsyncRend_OrStore(int32_t id, CUnit* unit, c
         // appropriate mutex lock - which can't be done here because it's intentionally private.
         // OTOH it can't be applied to processConnectResponse because the synchronous
         // call to this method applies the lock by itself, and same-thread-double-locking is nonportable (crashable).
-        return u->processAsyncConnectResponse(unit->m_Packet);
+        return u->processAsyncConnectResponse(unit->ref_packet());
     }
     LOGC(mglog.Debug) << "AsyncOrRND: packet RESOLVED TO ID=" << id << " -- continuing through CENTRAL PACKET QUEUE";
     // This is where also the packets for rendezvous connection will be landing,
     // in case of a synchronous connection.
-    storePkt(id, unit->m_Packet.clone());
+    storePkt(id, unit->ref_packet().clone());
 
     return CONN_CONTINUE;
 }

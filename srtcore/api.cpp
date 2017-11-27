@@ -865,7 +865,7 @@ int CUDTUnited::connect(SRTSOCKET u, const sockaddr* srcname, int srclen, const 
     // For a single socket, just do bind, then connect
 
     bind(s, source_addr);
-    return connectIn(Ref(*s), target_addr, 0);
+    return connectIn(Ref(*s), target_addr, 0, 0);
 }
 
 int CUDTUnited::connect(SRTSOCKET u, const sockaddr* name, int namelen, int32_t forced_isn)
@@ -893,10 +893,10 @@ int CUDTUnited::connect(SRTSOCKET u, const sockaddr* name, int namelen, int32_t 
     if (!s)
         throw CUDTException(MJ_NOTSUP, MN_SIDINVAL, 0);
 
-    return connectIn(Ref(*s), target_addr, forced_isn);
+    return connectIn(Ref(*s), target_addr, forced_isn, 0);
 }
 
-int CUDTUnited::connectIn(ref_t<CUDTSocket> r_s, const sockaddr_any& target_addr, int32_t forced_isn)
+int CUDTUnited::connectIn(ref_t<CUDTSocket> r_s, const sockaddr_any& target_addr, int32_t forced_isn, CUDTGroup* pg)
 {
     CUDTSocket* s = &*r_s;
 
@@ -925,6 +925,14 @@ int CUDTUnited::connectIn(ref_t<CUDTSocket> r_s, const sockaddr_any& target_addr
         // -> C(Snd|Rcv)Queue::init
         // -> pthread_create(...C(Snd|Rcv)Queue::worker...)
         s->m_Status = SRTS_OPENED;
+
+        if (pg)
+        {
+            // This overrides the value of m_StartTime
+            // and m_ullRcvPeerStartTime before this socket sends
+            // or receives anything.
+            s->m_Core.synchronizeGroupTime(pg);
+        }
     }
     else if (s->m_Status != SRTS_OPENED)
         throw CUDTException(MJ_NOTSUP, MN_ISCONNECTED, 0);
@@ -2534,10 +2542,12 @@ int CUDT::recvmsg2(SRTSOCKET u, char* buf, int len, ref_t<SRT_MSGCTRL> m)
 {
     try
     {
+        /* Temporarily blocked to keep compiling.
         if (u & SRTGROUP_MASK)
         {
             return s_UDTUnited.locateGroup(u, CUDTUnited::ERH_THROW)->recv(buf, len, m);
         }
+        */
 
         return s_UDTUnited.locateSocket(u, CUDTUnited::ERH_THROW)->core().recvmsg2(buf, len, m);
     }

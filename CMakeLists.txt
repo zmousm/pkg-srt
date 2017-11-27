@@ -191,6 +191,9 @@ include_directories(${SRT_INCLUDE_DIR})
 if (ENABLE_LOGGING)
     list(APPEND SRT_EXTRA_CFLAGS "-DENABLE_LOGGING=1")
 endif()
+if (ENABLE_DEBUG)
+    list(APPEND SRT_EXTRA_CFLAGS "-DENABLE_DEBUG=1")
+endif()
 
 if (${ENABLE_PROFILE} AND HAVE_COMPILER_GNU_COMPAT)
     # They are actually cflags, not definitions, but CMake is stupid enough.

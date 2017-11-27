@@ -135,8 +135,11 @@ enum GroupDataItem
 {
     GRPD_GROUPID,
     GRPD_GROUPTYPE,
+
+    /* That was an early concept, not to be used.
     GRPD_MASTERID,
     GRPD_MASTERTDIFF,
+    */
     /// end
     GRPD__SIZE
 };
@@ -205,14 +208,6 @@ public:
         }
     };
 
-    struct Payload
-    {
-        SRTSOCKET id;
-        int result;
-        std::vector<char> data;
-        SRT_MSGCTRL ctrl;
-    };
-
     typedef std::list<SocketData> group_t;
     typedef group_t::iterator gli_t;
     CUDTGroup();
@@ -240,6 +235,10 @@ public:
         return f;
     }
 
+    // NEED LOCKING
+    gli_t begin() { return m_Group.begin(); }
+    gli_t end() { return m_Group.end(); }
+
     // REMEMBER: the group spec should be taken from the socket
     // (set m_IncludedGroup to NULL and m_IncludedIter to grp->gli_NULL())
     // PRIOR TO calling this function.
@@ -263,8 +262,6 @@ public:
 
     void resetStateOn(CUDTSocket* sock);
 
-    void signalReadAvail(CUDTSocket* readysock);
-
     static gli_t gli_NULL() { return s_NoGroup.end(); }
 
     int send(const char* buf, int len, ref_t<SRT_MSGCTRL> mc);
@@ -278,6 +275,20 @@ public:
     SRT_SOCKSTATUS getStatus();
 
     bool getMasterData(SRTSOCKET slave, ref_t<SRTSOCKET> mpeer, ref_t<uint64_t> start_time);
+
+    bool isGroupReceiver()
+    {
+        // XXX add here also other group types, which
+        // predict group receiving.
+        return m_type == SRT_GTYPE_REDUNDANT;
+    }
+
+    // Required by CUDT to map its receiving buffer
+    CRcvBuffer* acquireReceiveBuffer(int buffer_size);
+    // XXX the buffer should be also released when
+    // a socket is removed from the group
+
+    pthread_mutex_t* exp_groupLock() { return &m_GroupLock; }
 
 #if ENABLE_LOGGING
     void debugGroup();
@@ -304,6 +315,7 @@ private:
     int m_iMaxPayloadSize;
     bool m_bSynRecving;
     pthread_t m_GroupReaderThread;
+    CRcvBuffer* m_pGroupReceiveBuffer;
     bool m_bOpened;                    // Set to true on a first use
 
     // There's no simple way of transforming config
@@ -321,12 +333,10 @@ private:
     }
 
     pthread_cond_t m_GroupReadAvail;
-    CUDTSocket* m_ReadyRead;
     volatile int32_t m_iRcvDeliveredSeqNo; // Seq of the payload last delivered
     volatile int32_t m_iRcvContiguousSeqNo; // Seq of the freshest payload stored in the buffer with no loss-gap
     volatile int32_t m_iLastSchedSeqNo; // represetnts the value of CUDT::m_iSndNextSeqNo for each running socket
 
-    std::queue<Payload> m_PayloadQ;
     pthread_mutex_t m_PayloadLock;
     pthread_cond_t m_PayloadReadAvail;
 
@@ -339,7 +349,6 @@ public:
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRT_GROUP_TYPE, type, m_type);
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, int32_t, currentSchedSequence, m_iLastSchedSeqNo);
 };
-
 
 // XXX REFACTOR: The 'CUDT' class is to be merged with 'CUDTSocket'.
 // There's no reason for separating them, there's no case of having them
@@ -466,7 +475,6 @@ public: // internal API
     bool isTsbPd() { return m_bOPT_TsbPd; }
     int RTT() { return m_iRTT; }
     int32_t sndSeqNo() { return m_iSndCurrSeqNo; }
-
     int32_t schedSeqNo() { return m_iSndNextSeqNo; }
     bool overrideSndSeqNo(int32_t seq);
 
@@ -476,11 +484,31 @@ public: // internal API
     int bandwidth() { return m_iBandwidth; }
     int64_t maxBandwidth() { return m_llMaxBW; }
     int MSS() { return m_iMSS; }
+
+    uint32_t latency_us() {return m_iTsbPdDelay_ms*1000; }
+
     size_t maxPayloadSize() { return m_iMaxSRTPayloadSize; }
     size_t OPT_PayloadSize() { return m_zOPT_ExpPayloadSize; }
     uint64_t minNAKInterval() { return m_ullMinNakInt_tk; }
     int32_t ISN() { return m_iISN; }
     sockaddr_any peerAddr() { return m_PeerAddr; }
+
+    int makeTS(uint64_t from_time)
+    {
+        // NOTE:
+        // - This calculates first the time difference towards start time.
+        // - This difference value is also CUT OFF THE SEGMENT information
+        //   (a multiple of MAX_TIMESTAMP+1)
+        // So, this can be simply defined as: TS = (RTS - STS) % (MAX_TIMESTAMP+1)
+        // XXX Would be nice to check if local_time > m_StartTime,
+        // otherwise it may go unnoticed with clock skew.
+        return int(from_time - m_StartTime);
+    }
+
+    void setPacketTS(CPacket& p, uint64_t local_time)
+    {
+        p.m_iTimeStamp = makeTS(local_time);
+    }
 
     // XXX See CUDT::tsbpd() to see how to implement it. This should
     // do the same as TLPKTDROP feature when skipping packets that are agreed
@@ -529,6 +557,7 @@ private:
     void cookieContest();
     EConnectStatus processRendezvous(ref_t<CPacket> reqpkt, const CPacket &response, const sockaddr_any& serv_addr, bool synchro);
     bool prepareConnectionObjects(const CHandShake &hs, HandshakeSide hsd, CUDTException *eout);
+    bool prepareBuffers(CUDTException *eout);
     EConnectStatus postConnect(const CPacket& response, bool rendezvous, CUDTException* eout, bool synchro);
     void applyResponseSettings();
     EConnectStatus processAsyncConnectResponse(const CPacket& pkt) ATR_NOEXCEPT;
@@ -554,6 +583,7 @@ private:
     // "possibly group type" that might be out of the existing values.
     bool interpretGroup(const int32_t grpdata[], int hsreq_type_cmd);
     SRTSOCKET makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE tp);
+    void synchronizeGroupTime(CUDTGroup* grp);
 
     void updateAfterSrtHandshake(int srt_cmd, int hsv);
 
@@ -702,6 +732,7 @@ private:
 
     // TSBPD thread main function.
     static void* tsbpd(void* param);
+    bool forgetPacketsUpTo(int32_t skiptoseqno);
 
     static CUDTUnited s_UDTUnited;               // UDT global management base
 
@@ -872,7 +903,6 @@ private: // Sending related data
         m_iRcvLastSkipAck = m_iRcvLastAck;
         m_iRcvLastAckAck = isn;
         m_iRcvCurrSeqNo = isn - 1;
-
     }
 
     uint64_t m_ullSndLastAck2Time;               // The time when last ACK2 was sent back
@@ -918,7 +948,32 @@ private: // Receiving related data
     uint32_t m_lMinimumPeerSrtVersion;
     uint32_t m_lPeerSrtVersion;
 
-    bool m_bTsbPd;                            // Peer sends TimeStamp-Based Packet Delivery Packets 
+    bool m_bTsbPd;                               // Peer sends TimeStamp-Based Packet Delivery Packets 
+    bool m_bGroupTsbPd;
+
+    void setTsbPd(bool val)
+    {
+        if (m_bOPT_GroupConnect)
+        {
+            m_bGroupTsbPd = val; // Take the values from user-configurable options
+            m_bTsbPd = false;
+        }
+        else
+        {
+            m_bTsbPd = val; // Take the values from user-configurable options
+            m_bGroupTsbPd = false;
+        }
+    }
+
+    bool isTsbpPd()
+    {
+        // Either of these means TSBPD is on.
+        // Two distinct flags are used to distinguish the
+        // situation of using a single-link TSBPD or group-link TSBPD
+        // (one TSBPD common for all links in the group).
+        return m_bTsbPd || m_bGroupTsbPd;
+    }
+
     pthread_t m_RcvTsbPdThread;                  // Rcv TsbPD Thread handle
     pthread_cond_t m_RcvTsbPdCond;
     bool m_bTsbPdAckWakeup;                      // Signal TsbPd thread on Ack sent
