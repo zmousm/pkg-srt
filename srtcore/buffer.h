@@ -75,7 +75,7 @@ modified by
 // The "cicrular numbers" are numbers that when increased up to the
 // maximum become zero, and similarly, when the zero value is decreased,
 // it turns into the maximum value minus one. This wrapping works the
-// same for adding and subtracting. Wrapping numbers cannot be multiplied.
+// same for adding and subtracting. Circular numbers cannot be multiplied.
 
 // Operations done on these numbers are marked with additional % character:
 // a %> b : a is later than b
