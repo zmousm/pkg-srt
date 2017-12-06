@@ -161,6 +161,12 @@ class CUDTSocket;
 
 class CUDTSocket;
 
+template <class ExecutorType>
+void SRT_tsbpdLoop(
+        ExecutorType* self,
+        SRTSOCKET sid,
+        pthread_mutex_t& lock);
+
 class CUDTGroup
 {
     friend class CUDTUnited;
@@ -284,11 +290,18 @@ public:
     }
 
     // Required by CUDT to map its receiving buffer
-    CRcvBuffer* acquireReceiveBuffer(int buffer_size);
+    CRcvBuffer* acquireReceiveBuffer(int buffer_size, int32_t iseq, bool live);
     // XXX the buffer should be also released when
     // a socket is removed from the group
 
+    int lazySpawnTSBPD();
+    bool forgetPacketsUpTo(int32_t skiptoseqno);
+    static void* tsbpd(void* param);
+
     pthread_mutex_t* exp_groupLock() { return &m_GroupLock; }
+    void addEPoll(int eid);
+    void removeEPoll(int eid);
+
 
 #if ENABLE_LOGGING
     void debugGroup();
@@ -314,9 +327,14 @@ private:
     std::set<int> m_sPollID;                     // set of epoll ID to trigger
     int m_iMaxPayloadSize;
     bool m_bSynRecving;
-    pthread_t m_GroupReaderThread;
-    CRcvBuffer* m_pGroupReceiveBuffer;
+    bool m_bTsbPd;
+    bool m_bTLPktDrop;
+    int m_iRcvTimeOut;                           // receiving timeout in milliseconds
+    pthread_t m_RcvTsbPdThread;
+    pthread_cond_t m_RcvTsbPdCond;
+    CRcvBuffer* m_pRcvBuffer;
     bool m_bOpened;                    // Set to true on a first use
+    bool m_bClosing;
 
     // There's no simple way of transforming config
     // items that are predicted to be used on socket.
@@ -324,23 +342,23 @@ private:
     // for setting later on a socket.
     std::vector<ConfigItem> m_config;
 
-    void readerThread();
-    static void* readerThread_fwd(void* arg)
-    {
-        CUDTGroup* self = (CUDTGroup*)arg;
-        self->readerThread();
-        return 0;
-    }
-
-    pthread_cond_t m_GroupReadAvail;
+    pthread_cond_t m_RecvDataCond;
     volatile int32_t m_iRcvDeliveredSeqNo; // Seq of the payload last delivered
     volatile int32_t m_iRcvContiguousSeqNo; // Seq of the freshest payload stored in the buffer with no loss-gap
     volatile int32_t m_iLastSchedSeqNo; // represetnts the value of CUDT::m_iSndNextSeqNo for each running socket
 
-    pthread_mutex_t m_PayloadLock;
-    pthread_cond_t m_PayloadReadAvail;
-
 public:
+
+    std::string CONID() const
+    {
+#if ENABLE_LOGGING
+        std::ostringstream os;
+        os << "%" << m_GroupID << ":";
+        return os.str();
+#else
+        return "";
+#endif
+    }
 
     // Property accessors
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRTSOCKET, id, m_GroupID);
@@ -348,6 +366,17 @@ public:
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, bool, managed, m_selfManaged);
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, SRT_GROUP_TYPE, type, m_type);
     SRTU_PROPERTY_RW_CHAIN(CUDTGroup, int32_t, currentSchedSequence, m_iLastSchedSeqNo);
+    SRTU_PROPERTY_RW_CHAIN(CUDTGroup, std::set<int>&, epollset, m_sPollID);
+
+    // Required for SRT_tsbpdLoop
+    SRTU_PROPERTY_RO(bool, closing, m_bClosing);
+    SRTU_PROPERTY_RO(CRcvBuffer*, rcvBuffer, m_pRcvBuffer);
+    SRTU_PROPERTY_RO(bool, isTLPktDrop, m_bTLPktDrop);
+    SRTU_PROPERTY_RO(bool, isSynReceiving, m_bSynRecving);
+    SRTU_PROPERTY_RO(pthread_cond_t*, recvDataCond, &m_RecvDataCond);
+    SRTU_PROPERTY_RO(pthread_cond_t*, recvTsbPdCond, &m_RcvTsbPdCond);
+    SRTU_PROPERTY_RO(CUDTUnited*, uglobal, m_pGlobal);
+    SRTU_PROPERTY_RO(std::set<int>&, pollset, m_sPollID);
 };
 
 // XXX REFACTOR: The 'CUDT' class is to be merged with 'CUDTSocket'.
@@ -493,6 +522,13 @@ public: // internal API
     int32_t ISN() { return m_iISN; }
     sockaddr_any peerAddr() { return m_PeerAddr; }
 
+    int minSndSize(int len = 0)
+    {
+        if (len == 0) // wierd, can't use non-static data member as default argument!
+            len = m_iMaxSRTPayloadSize;
+        return m_bMessageAPI ? (len+m_iMaxSRTPayloadSize-1)/m_iMaxSRTPayloadSize : 1;
+    }
+
     int makeTS(uint64_t from_time)
     {
         // NOTE:
@@ -510,6 +546,15 @@ public: // internal API
         p.m_iTimeStamp = makeTS(local_time);
     }
 
+    // Utility used for closing a listening socket
+    // immediately to free the socket
+    void notListening()
+    {
+        CGuard cg(m_ConnectionLock);
+        m_bListening = false;
+        m_pRcvQueue->removeListener(this);
+    }
+
     // XXX See CUDT::tsbpd() to see how to implement it. This should
     // do the same as TLPKTDROP feature when skipping packets that are agreed
     // to be lost. Note that this is predicted to be called with TSBPD off.
@@ -517,6 +562,18 @@ public: // internal API
     // sequence to be skipped, if that packet has been otherwise arrived through
     // a different channel.
     void skipIncoming(int32_t seq);
+
+    // For SRT_tsbpdLoop
+    CUDTUnited* uglobal() { return &s_UDTUnited; } // needed by tsbpdLoop
+    std::set<int>& pollset() { return m_sPollID; }
+    bool forgetPacketsUpTo(int32_t skiptoseqno);
+
+    SRTU_PROPERTY_RO(bool, closing, m_bClosing);
+    SRTU_PROPERTY_RO(CRcvBuffer*, rcvBuffer, m_pRcvBuffer);
+    SRTU_PROPERTY_RO(bool, isTLPktDrop, m_bTLPktDrop);
+    SRTU_PROPERTY_RO(bool, isSynReceiving, m_bSynRecving);
+    SRTU_PROPERTY_RO(pthread_cond_t*, recvDataCond, &m_RecvDataCond);
+    SRTU_PROPERTY_RO(pthread_cond_t*, recvTsbPdCond, &m_RcvTsbPdCond);
 
     void ConnectSignal(ETransmissionEvent tev, EventSlot sl);
     void DisconnectSignal(ETransmissionEvent tev);
@@ -732,7 +789,8 @@ private:
 
     // TSBPD thread main function.
     static void* tsbpd(void* param);
-    bool forgetPacketsUpTo(int32_t skiptoseqno);
+
+    void updateForgotten(int seqlen, int32_t lastack, int32_t skiptoseqno);
 
     static CUDTUnited s_UDTUnited;               // UDT global management base
 
@@ -889,7 +947,7 @@ private: // Sending related data
         // these fields, and this field has a different affinity than
         // the others, and is practically a source of this value, just
         // pushed through a queue barrier.
-        if ( initial)
+        if (initial)
             m_iSndNextSeqNo = isn;
         m_iSndLastAck2 = isn;
     }
@@ -900,7 +958,7 @@ private: // Sending related data
 #ifdef ENABLE_LOGGING
         m_iDebugPrevLastAck = m_iRcvLastAck;
 #endif
-        m_iRcvLastSkipAck = m_iRcvLastAck;
+        // m_iRcvLastSkipAck = m_iRcvLastAck; <-- see it passed to acquireReceiveBuffer()
         m_iRcvLastAckAck = isn;
         m_iRcvCurrSeqNo = isn - 1;
     }
@@ -929,11 +987,11 @@ private: // Receiving related data
     CACKWindow<1024> m_ACKWindow;             //< ACK history window
     CPktTimeWindow<16, 64> m_RcvTimeWindow;   //< Packet arrival time window
 
-    int32_t m_iRcvLastAck;                       //< Last sent ACK
+    atomic::atomic<int32_t> m_iRcvLastAck;                       //< Last sent ACK
 #ifdef ENABLE_LOGGING
     int32_t m_iDebugPrevLastAck;
 #endif
-    int32_t m_iRcvLastSkipAck;                   // Last dropped sequence ACK
+    // int32_t m_iRcvLastSkipAck;                   // Last dropped sequence ACK <-- field moved do CRcvBuffer.
     uint64_t m_ullLastAckTime_tk;                   // Timestamp of last ACK
     int32_t m_iRcvLastAckAck;                    // Last sent ACK that has been acknowledged
     int32_t m_iAckSeqNo;                         // Last ACK sequence number
@@ -976,7 +1034,7 @@ private: // Receiving related data
 
     pthread_t m_RcvTsbPdThread;                  // Rcv TsbPD Thread handle
     pthread_cond_t m_RcvTsbPdCond;
-    bool m_bTsbPdAckWakeup;                      // Signal TsbPd thread on Ack sent
+    //bool m_bTsbPdAckWakeup;                      // Signal TsbPd thread on Ack sent
 
 private: // synchronization: mutexes and conditions
     pthread_mutex_t m_ConnectionLock;            // used to synchronize connection operation

@@ -69,6 +69,7 @@ modified by
 #include "queue.h"
 #include "utilities.h"
 #include <fstream>
+#include <atomic/atomic.h> // privately-contained external library
 
 // The notation used for "circular numbers" in comments:
 // The "cicrular numbers" are numbers that when increased up to the
@@ -237,7 +238,8 @@ public:
    // Currently just "unimplemented".
    std::string CONID() const { return ""; }
 
-   CRcvBuffer(int bufsize = 65536);
+   static const int DEFAULT_SIZE = 65536;
+   CRcvBuffer(int bufsize, int32_t last_skip_ack, bool live);
    ~CRcvBuffer();
 
       /// Write data into the buffer.
@@ -245,7 +247,7 @@ public:
       /// @param [in] offset offset from last ACK point.
       /// @return 0 is success, -1 if data is repeated.
 
-   int addData(CUnit* unit, int offset);
+   int addDataAt(int32_t sequence, CUnit* unit);
 
       /// Read data into a user buffer.
       /// @param [in] data pointer to user buffer.
@@ -265,7 +267,7 @@ public:
       /// @param [in] len size of data to be acknowledged.
       /// @return 1 if a user buffer is fulfilled, otherwise 0.
 
-   void ackData(int len);
+   bool ackDataTo(int32_t upseq);
 
       /// Query how many buffer space left for data receiving.
       /// @return size of available buffer space (including user buffer) for data receiving.
@@ -390,10 +392,14 @@ public:
 
    bool getRcvFirstMsg(ref_t<uint64_t> tsbpdtime, ref_t<bool> passack, ref_t<int32_t> skipseqno, ref_t<int32_t> curpktseq);
 
+
+   // New version of the above function
+   bool getFirstAvailMsg(ref_t<uint64_t> r_playtime, ref_t<int32_t> r_pktseq, ref_t<bool> r_skipping);
+
       /// Update the ACK point of the buffer.
       /// @param len [in] size of data to be skip & acknowledged.
 
-   void skipData(int len);
+   int skipDataTo(int32_t upseq);
 
    bool empty() { return m_iReadHead == m_iReadTail; }
    bool full() { return m_iReadHead == (m_iReadTail+1)%m_iSize; }
@@ -426,11 +432,7 @@ public:
    // Expose the creation function because new/delete must be
    // privatized due to the fact that this class produces shared
    // objects now.
-   static CRcvBuffer* create(int size)
-   {
-       return new CRcvBuffer(size);
-   }
-
+   static CRcvBuffer* create(int size, int32_t last_skip_ack, bool live);
 
 private:
    // Privatize operator delete. This way only friend function
@@ -461,8 +463,18 @@ private:
       /// @param [in] timestamp packet timestamp (relative to peer StartTime), wrapping around every ~72 min
       /// @return local delivery time (usec)
 
+   void ackContiguous();
+
 public:
    uint64_t getPktTsbPdTime(uint32_t timestamp);
+
+   int32_t lastSkipAck()
+   {
+       return m_ReadTailSequence;
+   }
+
+   SRTU_PROPERTY_RW(bool, immediateAck, m_bImmediateAck);
+
 private:
 
    /// thread safe bytes counter
@@ -470,6 +482,9 @@ private:
    // XXX Please document.
 
    void countBytes(int pkts, int bytes, bool acked = false);
+   void ackData(int offset);
+   void skipData(int len);
+   int addData(CUnit* unit, int offset);
 
 private:
    bool scanMsg(ref_t<int> start, ref_t<int> end, ref_t<bool> passack);
@@ -479,18 +494,47 @@ private:
        return (basepos + shift) % m_iSize;
    }
 
+   // Simplified versions with ++ and --; avoid using division instruction
+   int shift_forward(int basepos)
+   {
+       if (++basepos == m_iSize)
+           basepos = 0;
+       return basepos;
+   }
+
+   int shift_backward(int basepos)
+   {
+       if (basepos == 0)
+           basepos = m_iSize;
+       return --basepos;
+   }
+
 private:
    CUnit** m_aUnits;                 // Array of pointed units collected in the buffer
    int m_iSize;                      // Size of the internal array
 
    int m_iReadHead;                  // HEAD: first packet available for reading
-   int m_iReadTail;                  // contiguous-TAIL: last packet available for reading
+   atomic::atomic<int> m_iReadTail;  // contiguous-TAIL: last packet available for reading
    int m_iPastAckDelta;              // delta between contiguous-TAIL and reception-TAIL
    int m_iRefCount;                  // reference counter for shared buffer
 
+   // This is atomic so that access doesn't require locking.
+   // int32_t should be atomic anyway, but this ascertains compiler support.
+   // Atomic access to this field is required for a quick checking whether the
+   // packet is in the buffer. Note that this state may be only "not yet set"
+   // and "already set (virtually forever)", that is, when once seen as set, this
+   // will be true for a virtually infinite time (this can turn into "unset" from
+   // this state in a predicted range of seqneuces).
+   atomic::atomic<int32_t> m_ReadTailSequence;       // sequence number assigned to a packet at m_iReadTail
+   bool m_bImmediateAck;             // If true, then the ACK pointer moves immediately upon reception
 
-   int m_iNotch;			// the starting read point of the first unit
+   int m_iNotch;			         // the starting read point of the first unit
+                                     // (this is required for stream reading mode; it's
+                                     // the position in the first unit in the list
+                                     // up to which data are already retrieved;
+                                     // in message reading mode it's unused and always 0)
 
+   pthread_mutex_t m_BufLock;           // used to synchronize buffer operation
    pthread_mutex_t m_BytesCountLock;    // used to protect counters operations
    int m_iBytesCount;                   // Number of payload bytes in the buffer
    int m_iAckedPktsCount;               // Number of acknowledged pkts in the buffer

@@ -491,7 +491,10 @@ public:
 
    int recvfrom(int32_t id, ref_t<CPacket> packet);
 
+   // Needed for affinity check (debug only)
    pthread_t threadId() { return m_WorkerThread; }
+
+   void stopWorker();
 
 private:
    static void* worker(void* param);

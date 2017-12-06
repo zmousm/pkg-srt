@@ -995,6 +995,7 @@ int CUDTUnited::close(const SRTSOCKET u)
 
         g->close();
         deleteGroup(g);
+        return 0;
     }
     CUDTSocket* s = locateSocket(u);
     if (!s)
@@ -1035,11 +1036,7 @@ int CUDTUnited::close(CUDTSocket* s)
       // listener slot in the RcvQueue.
 
       LOGC(mglog.Debug) << s->m_Core.CONID() << " CLOSING (removing listener immediately)";
-      {
-          CGuard cg(s->m_Core.m_ConnectionLock);
-          s->m_Core.m_bListening = false;
-          s->m_Core.m_pRcvQueue->removeListener(&s->core());
-      }
+      s->m_Core.notListening();
 
       // broadcast all "accept" waiting
       pthread_mutex_lock(&(s->m_AcceptLock));
@@ -1411,19 +1408,29 @@ int CUDTUnited::epoll_create()
 int CUDTUnited::epoll_add_usock(
    const int eid, const SRTSOCKET u, const int* events)
 {
-   CUDTSocket* s = locateSocket(u);
-   int ret = -1;
-   if (s)
-   {
-      ret = m_EPoll.add_usock(eid, u, events);
-      s->m_Core.addEPoll(eid);
-   }
-   else
-   {
-      throw CUDTException(MJ_NOTSUP, MN_SIDINVAL);
-   }
+    if (u & SRTGROUP_MASK)
+    {
+        CUDTGroup* g = locateGroup(u);
+        if (!g)
+            throw CUDTException(MJ_NOTSUP, MN_SIDINVAL, 0);
 
-   return ret;
+        g->addEPoll(eid);
+        return 0;
+    }
+
+    CUDTSocket* s = locateSocket(u);
+    int ret = -1;
+    if (s)
+    {
+        ret = m_EPoll.add_usock(eid, u, events);
+        s->m_Core.addEPoll(eid);
+    }
+    else
+    {
+        throw CUDTException(MJ_NOTSUP, MN_SIDINVAL);
+    }
+
+    return ret;
 }
 
 int CUDTUnited::epoll_add_ssock(
@@ -1458,19 +1465,26 @@ int CUDTUnited::epoll_update_ssock(
 
 int CUDTUnited::epoll_remove_usock(const int eid, const SRTSOCKET u)
 {
-   int ret = m_EPoll.remove_usock(eid, u);
+    int ret = m_EPoll.remove_usock(eid, u);
 
-   CUDTSocket* s = locateSocket(u);
-   if (s)
-   {
-      s->m_Core.removeEPoll(eid);
-   }
-   //else
-   //{
-   //   throw CUDTException(MJ_NOTSUP, MN_SIDINVAL);
-   //}
+    if (u & SRTGROUP_MASK)
+    {
+        CUDTGroup* g = locateGroup(u);
+        if (g)
+            g->removeEPoll(eid);
+        return ret;
+    }
+    CUDTSocket* s = locateSocket(u);
+    if (s)
+    {
+        s->m_Core.removeEPoll(eid);
+    }
+    //else
+    //{
+    //   throw CUDTException(MJ_NOTSUP, MN_SIDINVAL);
+    //}
 
-   return ret;
+    return ret;
 }
 
 int CUDTUnited::epoll_remove_ssock(const int eid, const SYSSOCKET s)

@@ -1355,6 +1355,21 @@ EConnectStatus CRcvQueue::worker_TryAsyncRend_OrStore(int32_t id, CUnit* unit, c
     return CONN_CONTINUE;
 }
 
+void CRcvQueue::stopWorker()
+{
+    // We use the decent way, so we say to the thread "please exit".
+    m_bClosing = true;
+
+    // Sanity check of the function's affinity.
+    if (pthread_self() == m_WorkerThread)
+    {
+        LOGC(mglog.Error) << "IPE: RcvQ:WORKER TRIES TO CLOSE ITSELF!";
+        return; // do nothing else, this would cause a hangup or crash.
+    }
+
+    // And we trust the thread that it does.
+    pthread_join(m_WorkerThread, NULL);
+}
 
 int CRcvQueue::recvfrom(int32_t id, ref_t<CPacket> r_packet)
 {

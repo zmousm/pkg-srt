@@ -105,6 +105,10 @@ foreach (gnid GNU Intel Clang AppleClang)
 	endif()
 endforeach()
 
+# External libraries: atomic
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/submodules/atomic/include)
+
+
 if (DISABLE_CXX11)
 	set (ENABLE_CXX11 0)
 elseif( DEFINED ENABLE_CXX11 )

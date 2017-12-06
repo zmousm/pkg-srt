@@ -172,6 +172,7 @@ private:
 class CUDTUnited
 {
 friend class CUDT;
+friend class CUDTGroup;
 friend class CRendezvousQueue;
 
 public:
@@ -277,6 +278,8 @@ public:
        }
        return NULL;
    }
+
+   CEPoll& epolmg() { return m_EPoll; }
 
 private:
 //   void init();

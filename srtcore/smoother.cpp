@@ -140,6 +140,11 @@ public:
 
     virtual int64_t sndBandwidth() ATR_OVERRIDE { return m_llSndMaxBW; }
 
+    // As a live mode, we don't need packets to be signed off for reading by the
+    // reader only when the sender knows that they have been received by the receiver.
+    // You just need the packet to be received and contiguous.
+    virtual bool useImmediateACK() ATR_OVERRIDE { return true; }
+
 private:
     // SLOTS:
 
@@ -621,8 +626,16 @@ bool Smoother::configure(CUDT* parent)
     return !!smoother;
 }
 
+void Smoother::dispose()
+{
+    if (smoother)
+    {
+        delete smoother;
+        smoother = 0;
+    }
+}
+
 Smoother::~Smoother()
 {
-    delete smoother;
-    smoother = 0;
+    dispose();
 }
