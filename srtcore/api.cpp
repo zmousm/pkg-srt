@@ -2562,12 +2562,10 @@ int CUDT::recvmsg2(SRTSOCKET u, char* buf, int len, ref_t<SRT_MSGCTRL> m)
 {
     try
     {
-        /* Temporarily blocked to keep compiling.
         if (u & SRTGROUP_MASK)
         {
             return s_UDTUnited.locateGroup(u, CUDTUnited::ERH_THROW)->recv(buf, len, m);
         }
-        */
 
         return s_UDTUnited.locateSocket(u, CUDTUnited::ERH_THROW)->core().recvmsg2(buf, len, m);
     }

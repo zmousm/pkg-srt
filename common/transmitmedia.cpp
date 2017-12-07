@@ -960,7 +960,7 @@ bytevector SrtSource::Read(size_t chunk)
                     // If was -1, then passthru.
                 }
             }
-            Error(UDT::getlasterror(), "recvmsg");
+            Error(UDT::getlasterror(), "srt_recvmsg2");
         }
 
         if ( stat == 0 )
