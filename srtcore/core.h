@@ -642,7 +642,7 @@ private:
     SRTSOCKET makeMePeerOf(SRTSOCKET peergroup, SRT_GROUP_TYPE tp);
     void synchronizeGroupTime(CUDTGroup* grp);
 
-    void updateAfterSrtHandshake(int srt_cmd, int hsv);
+    void updateAfterSrtHandshake();
 
     void updateSrtRcvSettings();
     void updateSrtSndSettings();

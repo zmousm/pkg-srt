@@ -2326,7 +2326,6 @@ bool CUDT::interpretSrtHandshake(const CHandShake& hs, const CPacket& hspkt, uin
                     return false;
                 }
                 handshakeDone();
-                updateAfterSrtHandshake(SRT_CMD_HSREQ, HS_VERSION_SRT1);
             }
             else if ( cmd == SRT_CMD_HSRSP )
             {
@@ -2350,7 +2349,6 @@ bool CUDT::interpretSrtHandshake(const CHandShake& hs, const CPacket& hspkt, uin
                     return false;
                 }
                 handshakeDone();
-                updateAfterSrtHandshake(SRT_CMD_HSRSP, HS_VERSION_SRT1);
             }
             else if ( cmd == SRT_CMD_NONE )
             {
@@ -3421,6 +3419,8 @@ EConnectStatus CUDT::processRendezvous(ref_t<CPacket> reqpkt, const CPacket& res
             return CONN_REJECT;
         }
 
+        updateAfterSrtHandshake();
+
         // No matter the value of needs_extension, the extension is always needed
         // when HSREQ was interpreted (to store HSRSP extension).
         m_ConnReq.m_extension = true;
@@ -3464,6 +3464,7 @@ EConnectStatus CUDT::processRendezvous(ref_t<CPacket> reqpkt, const CPacket& res
             LOGC(mglog.Debug, log << "processRendezvous: rejecting due to problems in prepareBuffers.");
             return CONN_REJECT;
         }
+        updateAfterSrtHandshake();
     }
 
     LOGC(mglog.Debug, log << CONID() << "processRendezvous: COOKIES Agent/Peer: "
@@ -3799,11 +3800,13 @@ EConnectStatus CUDT::postConnect(const CPacket& response, bool rendezvous, CUDTE
         }
         if ( !ok )
             return CONN_REJECT;
+
     }
 
     // XXX Probably redundant - processSrtMsg_HSRSP should do it in both
     // HSv4 and HSv5 modes.
     handshakeDone();
+    updateAfterSrtHandshake();
 
     CInfoBlock ib;
     ib.m_iFamily = m_PeerAddr.family();
@@ -4586,6 +4589,8 @@ void CUDT::acceptAndRespond(const sockaddr_any& peer, CHandShake* hs, const CPac
    CUDTException eout;
    if (!prepareBuffers(&eout))
        throw eout;
+
+   updateAfterSrtHandshake();
 
    setupCC();
 
@@ -7255,7 +7260,7 @@ void CUDT::processCtrl(CPacket& ctrlpkt)
           // parties are HSv5.
           if ( understood )
           {
-              updateAfterSrtHandshake(ctrlpkt.getExtendedType(), HS_VERSION_UDT4);
+              updateAfterSrtHandshake();
           }
           else
           {
@@ -7309,17 +7314,12 @@ void CUDT::updateSrtSndSettings()
     }
 }
 
-void CUDT::updateAfterSrtHandshake(int srt_cmd, int hsv)
+void CUDT::updateAfterSrtHandshake()
 {
-
-    switch (srt_cmd)
-    {
-    case SRT_CMD_HSREQ:
-    case SRT_CMD_HSRSP:
-        break;
-    default:
-        return;
-    }
+    // NOTE (update):
+    // This function is now called after interpretSrtHandshake
+    // and after creating buffers. It relies then on information
+    // that has been already adjusted after the handshake.
 
     // The only possibility here is one of these two:
     // - Agent is RESPONDER and it receives HSREQ.
@@ -7330,21 +7330,30 @@ void CUDT::updateAfterSrtHandshake(int srt_cmd, int hsv)
     //
     // This function will be called only ONCE in this
     // instance, through either HSREQ or HSRSP.
+#if ENABLE_LOGGING
+    const char* hs_side[] = { "DRAW", "INITIATOR", "RESPONDE" };
+    LOGC(mglog.Debug, log << "updateAfterSrtHandshake: version="
+            << m_ConnRes.m_iVersion << " side=" << hs_side[m_SrtHsSide]);
+#endif
 
-    if ( hsv > HS_VERSION_UDT4 )
+    if ( m_ConnRes.m_iVersion > HS_VERSION_UDT4 )
     {
         updateSrtRcvSettings();
         updateSrtSndSettings();
     }
-    else if ( srt_cmd == SRT_CMD_HSRSP )
+    else if (m_SrtHsSide == HSD_INITIATOR)
     {
         // HSv4 INITIATOR is sender
         updateSrtSndSettings();
     }
-    else
+    else if (m_SrtHsSide == HSD_RESPONDER)
     {
         // HSv4 RESPONDER is receiver
         updateSrtRcvSettings();
+    }
+    else
+    {
+        LOGP(mglog.Error, "updateSrtRcvSettings: STILL DRAW?");
     }
 }
 
