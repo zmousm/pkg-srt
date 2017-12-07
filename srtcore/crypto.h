@@ -139,7 +139,7 @@ public:
     std::string CONID() const;
 
     bool init(HandshakeSide, bool);
-    void close();
+    void wipe();
 
     // This function is used in:
     // - HSv4 (initial key material exchange - in HSv5 it's attached to handshake)

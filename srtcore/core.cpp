@@ -4878,7 +4878,8 @@ void CUDT::close()
       m_bConnected = false;
    }
 
-   m_pCryptoControl->close();
+   if (m_pCryptoControl)
+       m_pCryptoControl->wipe();
 
    if ( isTsbPd() && !pthread_equal(m_RcvTsbPdThread, pthread_t()))
    {
