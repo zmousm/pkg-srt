@@ -1298,9 +1298,9 @@ bool CRcvBuffer::getFirstAvailMsg(ref_t<uint64_t> r_playtime, ref_t<int32_t> r_p
     //                       });
 
     *r_skipping = false; // YET
-#if ENABLE_LOGGING
+//#if ENABLE_LOGGING
     std::string contig = "(NON-CTG)"; // so far
-#endif
+//#endif
 
     for (int i = read_tail; i != end_range; i = shift_forward(i))
     {

@@ -25,6 +25,8 @@ if { [catch {package require Tcl 8.5}] } {
 	exit 1
 }
 
+set here [file dirname [info script]]
+
 set ok 1
 
 if { [catch {exec pkg-config --exists openssl}] } {
@@ -51,6 +53,10 @@ if { $nothave } {
 	}
 }
 
+if { [glob -nocomplain $here/../submodules/atomic/*] == "" } {
+	puts "The 'atomic' submodule not cloned - cloning..."
+	exec 2>@stderr >@stdout git submodule update --init --recursive
+}
 
 # May others also apply
 
