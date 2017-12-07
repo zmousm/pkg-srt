@@ -966,7 +966,9 @@ int CRcvBuffer::readBuffer(char* data, int len)
    int p = m_iReadHead;
    int lastack = m_iReadTail;
    int rs = len;
-   char* begin = data; // logging only
+#if ENABLE_LOGGING
+   char* begin = data;
+#endif
 
    uint64_t now = (m_bTsbPdMode ? CTimer::getTime() : 0LL);
 

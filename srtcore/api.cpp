@@ -342,7 +342,7 @@ SRTSOCKET CUDTUnited::generateSocketID(bool for_group)
     else
         sockval = m_SocketIDGenerator;
 
-    LOGC(mglog.Debug, log << "generateSocketID: " << (for_group ? "(group, log" : "") << ": " << sockval));
+    LOGC(mglog.Debug, log << "generateSocketID: " << (for_group ? "(group, log" : "") << ": " << sockval);
 
     return sockval;
 }
@@ -379,8 +379,7 @@ SRTSOCKET CUDTUnited::newSocket(CUDTSocket** pps)
     CGuard cs(m_ControlLock);
     try
     {
-        LOGC(mglog.Debug, log
-            << CONID(ns->m_SocketID)
+      LOGC(mglog.Debug, log << CONID(ns->m_SocketID)
             << "newSocket: mapping socket "
             << ns->m_SocketID);
         m_Sockets[ns->m_SocketID] = ns;
@@ -419,7 +418,9 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
     {
         if (ns->m_Core.m_bBroken)
         {
-            LOGC(mglog.Debug, log << "newConnection: located a broken peer %" << hs->m_iID << " - discarding.");
+            LOGC(mglog.Debug, log
+                    << "newConnection: located a broken peer %"
+                    << hs->m_iID << " - discarding.");
             // last connection from the "peer" address has been broken
             ns->m_Status = SRTS_CLOSED;
             ns->m_TimeStamp = CTimer::getTime();
@@ -433,7 +434,9 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
         {
             // connection already exist, this is a repeated connection request
             // respond with existing HS information
-            LOGC(mglog.Debug, log << "newConnection: located a WORKING peer %" << hs->m_iID << " - ADAPTING.");
+            LOGC(mglog.Debug, log
+                    << "newConnection: located a WORKING peer %"
+                    << hs->m_iID << " - ADAPTING.");
 
             hs->m_iISN = ns->m_Core.m_iISN;
             hs->m_iMSS = ns->m_Core.m_iMSS;
@@ -454,7 +457,10 @@ int CUDTUnited::newConnection(const SRTSOCKET listen, const sockaddr_any& peer, 
     // exceeding backlog, refuse the connection request
     if (ls->m_QueuedSockets.size() >= ls->m_uiBackLog)
     {
-        LOGC(mglog.Error, log << "newConnection: The incoming " << ls->m_QueuedSockets.size(, log << "-th connection exceeds the backlog=" << ls->m_uiBackLog));
+        LOGC(mglog.Error, log << "newConnection: The incoming "
+                << ls->m_QueuedSockets.size()
+                << "-th connection exceeds the backlog="
+                << ls->m_uiBackLog);
         return -1;
     }
 

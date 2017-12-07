@@ -1120,7 +1120,9 @@ void* CRcvQueue::worker(void* param)
        }
 
        if ( have_received )
+       {
            LOGC(mglog.Debug, log << "worker: updateConnStatus (after received packet from the party)");
+       }
 
        // Check connection requests status for all sockets in the RendezvousQueue.
        // Pass the connection status from the last call of:
@@ -1135,6 +1137,7 @@ void* CRcvQueue::worker(void* param)
    return NULL;
 }
 
+#if ENABLE_LOGGING
 static string PacketInfo(const CPacket& pkt)
 {
     ostringstream os;
@@ -1155,6 +1158,7 @@ static string PacketInfo(const CPacket& pkt)
 
     return os.str();
 }
+#endif
 
 EReadStatus CRcvQueue::worker_RetrieveUnit(ref_t<int32_t> r_id, ref_t<CUnit*> r_unit, ref_t<sockaddr_any> r_addr)
 {
@@ -1328,11 +1332,15 @@ EConnectStatus CRcvQueue::worker_TryAsyncRend_OrStore(int32_t id, CUnit* unit, c
         // XXX this socket is then completely unknown to the system.
         // May be nice to send some rejection info to the peer.
         if ( id == 0 )
+        {
             LOGC(mglog.Debug, log << CONID() << "AsyncOrRND: no sockets expect connection from "
                 << SockaddrToString(addr) << " - POSSIBLE ATTACK");
+        }
         else
+        {
             LOGC(mglog.Debug, log << CONID() << "AsyncOrRND: no sockets expect socket " << id << " from "
                 << SockaddrToString(addr) << " - POSSIBLE ATTACK");
+        }
         return CONN_REJECT;
     }
 

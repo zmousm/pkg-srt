@@ -196,7 +196,7 @@ typedef std::set<SRTSOCKET> ud_set;
 #define BROKEN       SRTS_BROKEN
 #define CLOSING      SRTS_CLOSING
 #define CLOSED       SRTS_CLOSED
-#define NONEXIST     SRTS_NONEXIS
+#define NONEXIST     SRTS_NONEXIST
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -245,6 +245,8 @@ struct CPerfMon
    int byteAvailSndBuf;                 // available UDT sender buffer size
    int byteAvailRcvBuf;                 // available UDT receiver buffer size
 };
+
+typedef SRTSOCKET UDTSOCKET; //legacy alias
 
 #ifdef __cplusplus
 
@@ -333,10 +335,6 @@ public: // Legacy Error Code
     static const int ECONGEST = SRT_ECONGEST;
     static const int EPEERERR = SRT_EPEERERR;
 };
-
-
-
-typedef SRTSOCKET UDTSOCKET; //legacy alias
 
 namespace UDT
 {

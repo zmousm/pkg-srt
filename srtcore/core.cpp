@@ -1542,9 +1542,20 @@ bool CUDT::createSrtHandshake(ref_t<CPacket> r_pkt, ref_t<CHandShake> r_hs,
 
     if (m_iSndCryptoKeyLen > 0)
     {
-        have_kmreq = true;
-        hs.m_iType |= CHandShake::HS_EXT_KMREQ;
-        logext += ",KMREQ";
+        if (srtkm_cmd == SRT_CMD_KMRSP && kmdata_wordsize == 0)
+        {
+            // It means that Agent is responder and it expected to receive KMREQ
+            // from the peer, but no such thing happened. In result, also don't
+            // send any KMRSP. The connection will be unable to handle any sending
+            // from Agent to Peer, but still sending Peer to Agent should work.
+            LOGC(mglog.Error, log << "createSrtHandshake: Agent/responder declares encryption, but Peer/initiator did not. NOT SENDING KMRSP.");
+        }
+        else
+        {
+            have_kmreq = true;
+            hs.m_iType |= CHandShake::HS_EXT_KMREQ;
+            logext += ",KMREQ";
+        }
     }
 
     if (m_parent->m_IncludedGroup)
@@ -2375,7 +2386,9 @@ bool CUDT::interpretSrtHandshake(const CHandShake& hs, const CPacket& hspkt, uin
         if (m_iSndCryptoKeyLen <= 0)
         {
             LOGC(mglog.Error, log << "HS KMREQ: Peer declares encryption, but agent does not.");
-            return false;
+
+            // Still allow for connection, and allow Agent to send unencrypted stream to the peer.
+            return true;
         }
 
         uint32_t* begin = p;
@@ -2541,7 +2554,7 @@ bool CUDT::interpretSrtHandshake(const CHandShake& hs, const CPacket& hspkt, uin
     if ( !encrypted && m_iSndCryptoKeyLen > 0 )
     {
         LOGC(mglog.Error, log << "HS EXT: Agent declares encryption, but peer does not.");
-        return false;
+        return true;
     }
 
     // If agent has set some nondefault smoother, then smoother is expected from the peer.
@@ -2610,7 +2623,7 @@ bool CUDT::interpretGroup(const int32_t groupdata[], int hsreq_type_cmd)
     // These two situations can be only distinguished by the HS side.
     if (m_SrtHsSide == HSD_DRAW)
     {
-        LOGC(mglog.Error, log << "IPE: interpretGroup: The HS side should have been already decided); it's still DRAW. Grouping rejected.";
+        LOGC(mglog.Error, log << "IPE: interpretGroup: The HS side should have been already decided; it's still DRAW. Grouping rejected.");
         return false;
     }
 
@@ -3274,17 +3287,14 @@ bool CUDT::processAsyncConnectRequest(EConnectStatus cst, const CPacket& respons
     else
     {
         // (this procedure will be also run for HSv4 rendezvous)
-        size_t hs_size = m_iMaxSRTPayloadSize;
         LOGC(mglog.Debug, log << "processAsyncConnectRequest: serializing HS: buffer size=" << request.getLength());
         if (!createSrtHandshake(Ref(request), Ref(m_ConnReq), SRT_CMD_HSREQ, SRT_CMD_KMREQ, 0, 0))
         {
             LOGC(mglog.Error, log << "IPE: processAsyncConnectRequest: createSrtHandshake failed, dismissing.");
             return false;
         }
-        hs_size = request.getLength();
-
         LOGC(mglog.Debug, log << "processAsyncConnectRequest: sending HS reqtype=" << RequestTypeStr(m_ConnReq.m_iReqType)
-            << " to socket " << request.m_iID << " size=" << hs_size);
+            << " to socket " << request.m_iID << " size=" << request.getLength());
     }
 
     m_pSndQueue->sendto(serv_addr, request);
@@ -3462,10 +3472,14 @@ EConnectStatus CUDT::processRendezvous(ref_t<CPacket> reqpkt, const CPacket& res
         << " STATE:" << CHandShake::RdvStateStr(m_RdvState) << " ...");
 
     if ( rsp_type == URQ_DONE )
+    {
         LOGC(mglog.Debug, log << "... WON'T SEND any response, both sides considered connected");
+    }
     else
+    {
         LOGC(mglog.Debug, log << "... WILL SEND " << RequestTypeStr(rsp_type) << " "
         << (m_ConnReq.m_extension ? "with" : "without") << " SRT HS extensions");
+    }
 
     // This marks the information for the serializer that
     // the SRT handshake extension is required.
@@ -3678,8 +3692,8 @@ EConnectStatus CUDT::processConnectResponse(const CPacket& response, CUDTExcepti
       // set cookie
       if (m_ConnRes.m_iReqType == URQ_INDUCTION)
       {
-         LOGC(mglog.Debug, log << CONID() << "processConnectResponse: REQ-TIME LOW); got INDUCTION HS response (cookie:"
-             << hex << m_ConnRes.m_iCookie << " version:" << dec << m_ConnRes.m_iVersion << "), sending CONCLUSION HS with this cookie";
+         LOGC(mglog.Debug, log << CONID() << "processConnectResponse: REQ-TIME LOW; got INDUCTION HS response (cookie:"
+             << hex << m_ConnRes.m_iCookie << " version:" << dec << m_ConnRes.m_iVersion << "), sending CONCLUSION HS with this cookie");
 
          m_ConnReq.m_iCookie = m_ConnRes.m_iCookie;
          m_ConnReq.m_iReqType = URQ_CONCLUSION;
@@ -4231,13 +4245,14 @@ void* CUDT_tsbpd_OLD(void* param)
           if (rxready)
           {
 #if ENABLE_LOGGING
+#if ENABLE_LOGGING
               uint64_t now = CTimer::getTime();
-
               int64_t timediff = 0;
               if ( tsbpdtime )
                   timediff = int64_t(now) - int64_t(tsbpdtime);
 
               int seqbase = self->m_pRcvBuffer->lastSkipAck();
+#endif
 #endif
 
                * 
@@ -4277,8 +4292,7 @@ void* CUDT_tsbpd_OLD(void* param)
 
       if (rxready)
       {
-          int seq = current_pkt_seq;
-          LOGC(tslog.Debug, log << self->CONID() << "tsbpd: PLAYING PACKET seq=" << seq
+          LOGC(tslog.Debug, log << self->CONID() << "tsbpd: PLAYING PACKET seq=" << current_pkt_seq
               << " (belated " << ((CTimer::getTime() - tsbpdtime)/1000.0) << "ms)");
          // 
          //  There are packets ready to be delivered
@@ -4865,7 +4879,7 @@ void CUDT::close()
    {
        LOGC(mglog.Debug, log << "CLOSING, joining TSBPD thread...");
        void* retval;
-       int ret = pthread_join(m_RcvTsbPdThread, &retval);
+       int ret SRT_ATR_UNUSED = pthread_join(m_RcvTsbPdThread, &retval);
        LOGC(mglog.Debug, log << "... " << (ret == 0 ? "SUCCEEDED" : "FAILED"));
    }
 
@@ -5149,7 +5163,9 @@ void CUDT::checkNeedDrop(ref_t<bool> bCongestion)
             m_ullTraceSndBytesDrop += dbytes;
             m_ullSndBytesDropTotal += dbytes;
 
-            int32_t realack = m_iSndLastDataAck; // needed for log only
+#if ENABLE_LOGGING
+            int32_t realack = m_iSndLastDataAck;
+#endif
             int32_t fakeack = CSeqNo::incseq(m_iSndLastDataAck, dpkts);
 
             m_iSndLastAck = fakeack;
@@ -5542,7 +5558,7 @@ int CUDT::receiveMessage(char* data, int len, ref_t<SRT_MSGCTRL> r_mctrl)
                 s_UDTUnited.m_EPoll.update_events(m_SocketID, m_sPollID, SRT_EPOLL_IN, false);
 
                 // After signaling the tsbpd for ready data, report the bandwidth.
-                double bw = Bps2Mbps( m_iBandwidth * m_iMaxSRTPayloadSize );
+                double bw SRT_ATR_UNUSED = Bps2Mbps( m_iBandwidth * m_iMaxSRTPayloadSize );
                 LOGC(mglog.Debug, log << CONID() << "CURRENT BANDWIDTH: " << bw << "Mbps (" << m_iBandwidth << " buffers per second)");
             }
             return res;
@@ -6134,17 +6150,15 @@ bool CUDT::updateCC(ETransmissionEvent evt, EventVariant arg)
     // time when the sending buffer. For sanity check, check both first.
     if (!m_Smoother.ready() || !m_pSndBuffer)
     {
-        bool both = !m_Smoother.ready() && !m_pSndBuffer;
         LOGC(mglog.Error, log << CONID() << "updateCC: CAN'T DO UPDATE - smoother "
             << (m_Smoother.ready() ? "ready" : "NOT READY")
-            << (both ? ", and " : ", but ")
-            << " sending buffer "
+            << "; sending buffer "
             << (m_pSndBuffer ? "NOT CREATED" : "created"));
 
         return false;
     }
 
-    LOGC(mglog.Debug, log << CONID() << "updateCC: EVENT:" << TransmissionEventStr(evt));
+    LOGC(mglog.Debug, log << "updateCC: EVENT:" << TransmissionEventStr(evt));
 
     if (evt == TEV_INIT)
     {
@@ -7894,6 +7908,10 @@ int CUDT::processData(CUnit* unit)
            m_ullRcvBytesUndecryptTotal += pktsz;
        }
    }
+      else
+      {
+          LOGC(dlog.Debug, log << "crypter: data not encrypted, returning as plain");
+      }
 
 
    if (m_bClosing) {
@@ -8019,11 +8037,15 @@ int CUDT::processData(CUnit* unit)
            }
 
            if ( m_FreshLoss.empty() )
-               LOGF(mglog.Debug, "NO MORE FRESH LOSS RECORDS.");
+           {
+               LOGP(mglog.Debug, "NO MORE FRESH LOSS RECORDS.");
+           }
            else
+           {
                LOGF(mglog.Debug, "STILL %zu FRESH LOSS RECORDS, FIRST: %d-%d (%d) TTL: %d", m_FreshLoss.size(),
                        i->seq[0], i->seq[1], 1+CSeqNo::seqcmp(i->seq[1], i->seq[0]),
                        i->ttl);
+           }
 
            // Phase 2: rest of the records should have TTL decreased.
            for ( ; i != m_FreshLoss.end(); ++i )
@@ -8119,7 +8141,7 @@ void CUDT::unlose(const CPacket& packet)
             m_iTraceReorderDistance = max(seqdiff, m_iTraceReorderDistance);
             if ( seqdiff > m_iReorderTolerance )
             {
-                int prev = m_iReorderTolerance;
+                int prev SRT_ATR_UNUSED = m_iReorderTolerance;
                 m_iReorderTolerance = min(seqdiff, m_iMaxReorderTolerance);
                 LOGF(mglog.Debug, "Belated by %d seqs - Reorder tolerance %s %d", seqdiff,
                         (prev == m_iReorderTolerance) ? "REMAINS with" : "increased to", m_iReorderTolerance);
@@ -9389,14 +9411,14 @@ int CUDTGroup::send(const char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
             LOGC(mglog.Debug, log << "CUDTGroup::send: socket %" << d->id
                 << ": override snd sequence " << lastseq
                 << " with " << curseq << " (diff by "
-                << CSeqNo::seqcmp(curseq, lastseq) << ")); SENDING PAYLOAD";
+                << CSeqNo::seqcmp(curseq, lastseq) << "); SENDING PAYLOAD");
             d->ps->core().overrideSndSeqNo(curseq);
         }
         else
         {
             LOGC(mglog.Debug, log << "CUDTGroup::send: socket %" << d->id
                 << ": sequence remains with original value: " << lastseq
-                << "); SENDING PAYLOAD";
+                << "; SENDING PAYLOAD");
         }
 
         // Now send and check the status

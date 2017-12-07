@@ -51,6 +51,7 @@ extern logging::Logger mglog, dlog;
 // 10* HAICRYPT_DEF_KM_PRE_ANNOUNCE
 const int SRT_CRYPT_KM_PRE_ANNOUNCE = 0x10000;
 
+#if ENABLE_LOGGING
 static std::string KmStateStr(SRT_KM_STATE state)
 {
     switch (state)
@@ -66,7 +67,9 @@ static std::string KmStateStr(SRT_KM_STATE state)
     }
 }
 
-static std::string FormatKmMessage(std::string hdr, bool isrcv, int cmd, size_t srtlen, SRT_KM_STATE agt_state, SRT_KM_STATE peer_state)
+
+static std::string FormatKmMessage(std::string hdr, bool isrcv, int cmd,
+        size_t srtlen, SRT_KM_STATE agt_state, SRT_KM_STATE peer_state)
 {
     std::ostringstream os;
     os << hdr << ": cmd=" << cmd << "(" << (cmd == SRT_CMD_KMREQ ? "KMREQ":"KMRSP") <<") len="
@@ -82,8 +85,9 @@ static std::string FormatKmMessage(std::string hdr, bool isrcv, int cmd, size_t 
 
     return os.str();
 }
+#endif
 
-void CCryptoControl::updateKmState(int cmd, size_t srtlen)
+void CCryptoControl::updateKmState(int cmd, size_t srtlen SRT_ATR_UNUSED)
 {
     if (cmd == SRT_CMD_KMREQ)
     {
@@ -122,11 +126,11 @@ int CCryptoControl::processSrtMsg_KMREQ(const uint32_t* srtdata, size_t bytelen,
     bool bidirectional = hsv > CUDT::HS_VERSION_UDT4;
 
     // Local macro to return rejection appropriately.
-    // For HSv5 this function is part of the general handshake, so this should
-    // reject the connection.
-    // For HSv4 this is received by a custom message after the connection is
-    // established, so in this case the rejection response must be sent as KMRSP.
-#define KMREQ_RESULT_REJECTION() if (bidirectional) { return SRT_CMD_NONE; } else { srtlen = 1; goto HSv4_ErrorReport; }
+    // CHANGED. The first version made HSv5 reject the connection.
+    // This isn't well handled by applications, so the connection is
+    // still established, but unable to handle any transport.
+//#define KMREQ_RESULT_REJECTION() if (bidirectional) { return SRT_CMD_NONE; } else { srtlen = 1; goto HSv4_ErrorReport; }
+#define KMREQ_RESULT_REJECTION() { srtlen = 1; goto HSv4_ErrorReport; }
 
     int rc = HAICRYPT_OK; // needed before 'goto' run from KMREQ_RESULT_REJECTION macro
     size_t sek_len = 0;
@@ -218,7 +222,8 @@ int CCryptoControl::processSrtMsg_KMREQ(const uint32_t* srtdata, size_t bytelen,
     {
         // For HSv5, the above error indication should turn into rejection reaction.
         if ( srtlen == 1 )
-            return SRT_CMD_NONE;
+            //return SRT_CMD_NONE;
+            goto HSv4_ErrorReport;
 
         m_iSndKmKeyLen = m_iRcvKmKeyLen;
         if (HaiCrypt_Clone(m_hRcvCrypto, HAICRYPT_CRYPTO_DIR_TX, &m_hSndCrypto))
@@ -240,7 +245,8 @@ int CCryptoControl::processSrtMsg_KMREQ(const uint32_t* srtdata, size_t bytelen,
         LOGP(mglog.Note, FormatKmMessage("processSrtMsg_KMREQ", false, SRT_CMD_KMREQ, bytelen, m_iSndKmState, m_iSndPeerKmState));
 
         if ( srtlen == 1 )
-            return SRT_CMD_NONE;
+            //return SRT_CMD_NONE;
+            goto HSv4_ErrorReport;
     }
 
     return SRT_CMD_KMRSP;
@@ -365,7 +371,7 @@ void CCryptoControl::regenCryptoKm(bool sendit, bool bidirectional)
                 ||  (0 != memcmp(out_p[i], m_SndKmMsg[ki].Msg, m_SndKmMsg[ki].MsgLen))) 
         {
 
-            uint8_t* oldkey = m_SndKmMsg[ki].Msg;
+            uint8_t* oldkey SRT_ATR_UNUSED = m_SndKmMsg[ki].Msg;
             LOGF(mglog.Debug, "new key[%d] len=%zd,%zd msg=%0x,%0x\n", 
                     ki, out_len_p[i], m_SndKmMsg[ki].MsgLen,
                     *(int32_t *)out_p[i],
@@ -487,6 +493,7 @@ std::string CCryptoControl::CONID() const
     return os.str();
 }
 
+#if ENABLE_LOGGING
 static std::string CryptoFlags(int flg)
 {
     using namespace std;
@@ -503,6 +510,7 @@ static std::string CryptoFlags(int flg)
     copy(f.begin(), f.end(), ostream_iterator<string>(os, "|"));
     return os.str();
 }
+#endif
 
 bool CCryptoControl::createCryptoCtx(ref_t<HaiCrypt_Handle> hCrypto, size_t keylen, HaiCrypt_CryptoDir cdir)
 {
@@ -528,7 +536,7 @@ bool CCryptoControl::createCryptoCtx(ref_t<HaiCrypt_Handle> hCrypto, size_t keyl
 
     crypto_cfg.flags = HAICRYPT_CFG_F_CRYPTO | (cdir == HAICRYPT_CRYPTO_DIR_TX ? HAICRYPT_CFG_F_TX : 0);
     crypto_cfg.xport = HAICRYPT_XPT_SRT;
-    crypto_cfg.cipher = HaiCryptCipher_OpenSSL_EVP();
+    crypto_cfg.cipher = HaiCryptCipher_Get_Instance();
     crypto_cfg.key_len = (size_t)keylen;
     crypto_cfg.data_max_len = HAICRYPT_DEF_DATA_MAX_LENGTH;    //MTU
     crypto_cfg.km_tx_period_ms = 0;//No HaiCrypt KM inject period, handled in SRT;

@@ -26,11 +26,7 @@ set (CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/scripts")
 include(haiUtil)
 include(FindPkgConfig)
 
-set(SRT_VERSION_MAJOR 1)
-set(SRT_VERSION_MINOR 3)
-set(SRT_VERSION_PATCH 0)
-
-set(SRT_VERSION "${SRT_VERSION_MAJOR}.${SRT_VERSION_MINOR}.${SRT_VERSION_PATCH}")
+set (SRT_VERSION 1.3.0)
 set_version_variables(SRT_VERSION ${SRT_VERSION})
 
 if (NOT DEFINED ENABLE_DEBUG)
@@ -81,20 +77,70 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
-if (DEFINED WITH_SRT_NAME)
-	set (TARGET_haisrt ${WITH_SRT_NAME})
+# Handle WITH_COMPILER_PREFIX and WITH_COMPILER_TYPE options
+if (DEFINED WITH_COMPILER_PREFIX)
+	message(STATUS "Handling compiler with WITH_COMPILER_PREFIX=${WITH_COMPILER_PREFIX}")
+	# Check also type. Default is gcc.
+	if (NOT DEFINED WIHT_COMPILER_TYPE)
+		set (WITH_COMPILER_TYPE gcc)
+	endif()
+
+	if (${WITH_COMPILER_TYPE} STREQUAL gcc)
+		set (CMAKE_C_COMPILER ${WITH_COMPILER_PREFIX}gcc)
+		set (CMAKE_CXX_COMPILER ${WITH_COMPILER_PREFIX}g++)
+	elseif (${WITH_COMPILER_TYPE} STREQUAL cc)
+		set (CMAKE_C_COMPILER ${WITH_COMPILER_PREFIX}cc)
+		set (CMAKE_CXX_COMPILER ${WITH_COMPILER_PREFIX}c++)
+	else()
+		# Use blindly <command> for C compiler and <command>++ for C++.
+		# At least this matches clang.
+		set (CMAKE_C_COMPILER ${WITH_COMPILER_PREFIX}${WITH_COMPILER_TYPE})
+		set (CMAKE_CXX_COMPILER ${WITH_COMPILER_PREFIX}${WITH_COMPILER_TYPE}++)
+	endif()
+else()
+	message(STATUS "No WITH_COMPILER_PREFIX - using C++ compiler ${CMAKE_CXX_COMPILER}")
 endif()
 
-if (DEFINED WITH_HAICRYPT_NAME)
-	set (TARGET_haicrypt ${WITH_HAICRYPT_NAME})
+
+if (DEFINED WITH_SRT_TARGET)
+	set (TARGET_haisrt ${WITH_SRT_TARGET})
+endif()
+
+if (DEFINED WITH_HAICRYPT_TARGET)
+	set (TARGET_haicrypt ${WITH_HAICRYPT_TARGET})
 endif()
 
 set_if(DARWIN ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 set_if(LINUX ${CMAKE_SYSTEM_NAME} MATCHES "Linux")
 
+# When you use crosscompiling, you have to take care that PKT_CONFIG_PATH
+# and CMAKE_PREFIX_PATH are set properly.
+
 # find OpenSSL
-find_package(OpenSSL REQUIRED)
-message (STATUS "OpenSSL libraries: ${OPENSSL_LIBRARIES}")
+if ( USE_GNUTLS )
+	pkg_check_modules (SSL REQUIRED gnutls nettle)
+
+	add_definitions(
+		-DUSE_GNUTLS=1
+	)
+
+	link_directories(
+		${SSL_LIBRARY_DIRS}
+	)
+	message(STATUS "SSL Dependency: using GNUTLS with Nettle, as requested")
+else()
+	find_package(OpenSSL REQUIRED)
+	set (SSL_INCLUDE_DIRS ${OPENSSL_INCLUDE_DIR})
+	set (SSL_LIBRARIES ${OPENSSL_LIBRARIES})
+
+	add_definitions(
+		-DHAICRYPT_USE_OPENSSL_EVP=1
+		-DHAICRYPT_USE_OPENSSL_AES
+	)
+	message(STATUS "SSL Dependency: using OpenSSL (default)")
+endif()
+
+message (STATUS "SSL libraries: ${SSL_LIBRARIES}")
 
 # Detect if the compiler is GNU compatable for flags
 set(HAVE_COMPILER_GNU_COMPAT 0)
@@ -183,8 +229,6 @@ add_definitions(
    -D_GNU_SOURCE
    -DHAI_PATCH=1
    -DHAI_ENABLE_SRT=1
-   -DHAICRYPT_USE_OPENSSL_EVP=1
-   -DHAICRYPT_USE_OPENSSL_AES
    -DSRT_VERSION="${SRT_VERSION}"
 )
 
@@ -207,26 +251,27 @@ endif()
 
 
 # find pthread
-find_path(PTHREAD_INCLUDE_DIR pthread.h HINTS C:/pthread-win32/include)
+	find_path(PTHREAD_INCLUDE_DIR pthread.h HINTS C:/pthread-win32/include)
 if (PTHREAD_INCLUDE_DIR)
 	message(STATUS "Pthread include dir: ${PTHREAD_INCLUDE_DIR}")
 else()
 	message(FATAL_ERROR "Failed to find pthread.h. Specify PTHREAD_INCLUDE_DIR.")
 endif()
 
-find_library(PTHREAD_LIBRARY NAMES pthread pthread_dll pthread_lib HINTS C:/pthread-win32/lib)
+	find_library(PTHREAD_LIBRARY NAMES pthread pthread_dll pthread_lib HINTS C:/pthread-win32/lib)
 if (PTHREAD_LIBRARY)
 	message(STATUS "Pthread library: ${PTHREAD_LIBRARY}")
 else()
 	message(FATAL_ERROR "Failed to find pthread library. Specify PTHREAD_LIBRARY.")
 endif()
 
+
 # This is required in some projects that add some other sources
 # to the SRT library to be compiled together (aka "virtual library").
 if (DEFINED SRT_EXTRA_LIB_INC)
-	message (STATUS "--- Extra injection: ${SRT_EXTRA_LIB_INC}")
 	include(${SRT_EXTRA_LIB_INC}.cmake)
 	# Expected to provide variables:
+	# - SOURCES_srt_extra
 	# - EXTRA_stransmit
 endif()
 
@@ -236,7 +281,13 @@ endif()
 # Target: haicrypt.
 # Completing sources and installable headers. Flag settings will follow.
 # ---
-MafRead(haicrypt/filelist.maf
+if ( USE_GNUTLS )
+	set (HAICRYPT_FILELIST_MAF "haicrypt/filelist-gnutls.maf")
+else()
+	set (HAICRYPT_FILELIST_MAF "haicrypt/filelist.maf")
+endif()
+
+MafRead(${HAICRYPT_FILELIST_MAF}
 	SOURCES SOURCES_haicrypt_indir
 	PUBLIC_HEADERS HEADERS_haicrypt_indir
 	PROTECTED_HEADERS HEADERS_haicrypt_indir
@@ -336,7 +387,7 @@ else()
 	set (DEPENDS_srt ${TARGET_haicrypt})
 endif()
 
-add_library(${TARGET_srt} ${srt_libspec} ${SOURCES_srt})
+add_library(${TARGET_srt} ${srt_libspec} ${SOURCES_srt} ${SOURCES_srt_extra})
 
 # ---
 # And back to target: haicrypt. Both targets must be defined
@@ -349,13 +400,13 @@ add_library(${TARGET_srt} ${srt_libspec} ${SOURCES_srt})
 
 
 target_include_directories(${TARGET_haicrypt}
-	PRIVATE  ${OPENSSL_INCLUDE_DIR}
+	PRIVATE  ${SSL_INCLUDE_DIRS}
 	PUBLIC ${SRT_SRC_HAICRYPT_DIR}
 )
 
 set_target_properties (${TARGET_haicrypt} PROPERTIES VERSION ${SRT_VERSION} SOVERSION ${SRT_VERSION_MAJOR})
-target_link_libraries(${TARGET_haicrypt} PRIVATE ${OPENSSL_LIBRARIES})
-set (SRT_LIBS_PRIVATE ${OPENSSL_LIBRARIES})
+target_link_libraries(${TARGET_haicrypt} PRIVATE ${SSL_LIBRARIES})
+set (SRT_LIBS_PRIVATE ${SSL_LIBRARIES})
 if (WIN32)
 	target_link_libraries(${TARGET_haicrypt} PRIVATE ws2_32.lib)
 	set (SRT_LIBS_PRIVATE ${SRT_LIBS_PRIVATE} ws2_32.lib)
@@ -545,7 +596,6 @@ if ( ENABLE_CXX11 )
 endif()
 
 if (DEFINED SRT_EXTRA_APPS_INC)
-	message (STATUS "--- Extra injection: ${SRT_EXTRA_APPS_INC}")
 	include(${SRT_EXTRA_APPS_INC}.cmake)
 	# No extra variables expected. Just use the variables
 	# already provided and define additional targets.
