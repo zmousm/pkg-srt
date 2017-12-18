@@ -1688,30 +1688,42 @@ void CUDTUnited::removeSocket(const SRTSOCKET u)
    if (i == m_ClosedSockets.end())
       return;
 
+   CUDTSocket* s = i->second;
+
    // decrease multiplexer reference count, and remove it if necessary
-   const int mid = i->second->m_iMuxID;
+   const int mid = s->m_iMuxID;
 
    {
-       CGuard cg(i->second->m_AcceptLock);
+       CGuard cg(s->m_AcceptLock);
 
-      // if it is a listener, close all un-accepted sockets in its queue
-      // and remove them later
-      for (set<SRTSOCKET>::iterator q = i->second->m_QueuedSockets.begin();
-         q != i->second->m_QueuedSockets.end(); ++ q)
-      {
-         m_Sockets[*q]->m_Core.m_bBroken = true;
-         m_Sockets[*q]->m_Core.close();
-         m_Sockets[*q]->m_TimeStamp = CTimer::getTime();
-         m_Sockets[*q]->m_Status = SRTS_CLOSED;
-         m_ClosedSockets[*q] = m_Sockets[*q];
-         m_Sockets.erase(*q);
-      }
+       // if it is a listener, close all un-accepted sockets in its queue
+       // and remove them later
+       for (set<SRTSOCKET>::iterator q = s->m_QueuedSockets.begin();
+               q != s->m_QueuedSockets.end(); ++ q)
+       {
+           sockets_t::iterator si = m_Sockets.find(*q);
+           if (si == m_Sockets.end())
+           {
+               // gone in the meantime
+               LOGC(mglog.Error, log << "removeSocket: IPE? socket %" << u << " being queued for listener socket %" << s->m_SocketID << " is GONE in the meantime ???");
+               continue;
+           }
+
+           CUDTSocket* as = si->second;
+
+           as->m_Core.m_bBroken = true;
+           as->m_Core.close();
+           as->m_TimeStamp = CTimer::getTime();
+           as->m_Status = SRTS_CLOSED;
+           m_ClosedSockets[*q] = as;
+           m_Sockets.erase(*q);
+       }
 
    }
 
    // remove from peer rec
    map<int64_t, set<SRTSOCKET> >::iterator j = m_PeerRec.find(
-      i->second->getPeerSpec());
+      s->getPeerSpec());
    if (j != m_PeerRec.end())
    {
       j->second.erase(u);
@@ -1724,14 +1736,14 @@ void CUDTUnited::removeSocket(const SRTSOCKET u)
    * remains forever causing epoll_wait to unblock continuously for inexistent
    * sockets. Get rid of all events for this socket.
    */
-   m_EPoll.update_events(u, i->second->m_Core.m_sPollID,
+   m_EPoll.update_events(u, s->m_Core.m_sPollID,
       UDT_EPOLL_IN|UDT_EPOLL_OUT|UDT_EPOLL_ERR, false);
 
    // delete this one
    LOGC(mglog.Debug, log << "GC/removeSocket: closing associated UDT %" << u);
-   i->second->m_Core.close();
+   s->m_Core.close();
    LOGC(mglog.Debug, log << "GC/removeSocket: DELETING SOCKET %" << u);
-   delete i->second;
+   delete s;
    m_ClosedSockets.erase(i);
 
    map<int, CMultiplexer>::iterator m;
