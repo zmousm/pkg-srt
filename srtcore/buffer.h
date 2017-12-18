@@ -444,6 +444,18 @@ private:
        ::operator delete(mem);
    }
 
+   /// This gives up unit at index p. The unit is given back to the
+   /// free unit storage for further assignment for the new incoming
+   /// data.
+   size_t freeUnitAt(size_t p)
+   {
+       CUnit* u = m_aUnits[p];
+       m_aUnits[p] = NULL;
+       size_t rmbytes = u->ref_packet().getLength();
+       u->setFree();
+       return rmbytes;
+   }
+
       /// Adjust receive queue to 1st ready to play message (tsbpdtime < now).
       // Parameters (of the 1st packet queue, ready to play or not):
       /// @param tsbpdtime [out] localtime-based (uSec) packet time stamp including buffering delay of 1st packet or 0 if none
@@ -459,10 +471,9 @@ private:
 
    uint64_t getTsbPdTimeBase(uint32_t timestamp);
 
-      /// Get packet local delivery time
-      /// @param [in] timestamp packet timestamp (relative to peer StartTime), wrapping around every ~72 min
-      /// @return local delivery time (usec)
-
+   /// Internally acknowledge packets. That is, move the m_iReadTail pointer
+   /// to point to the last packet packet that is still contiguous.
+   /// @return The number of newly acknowledged contiguous packets.
    void ackContiguous();
 
 public:
@@ -505,7 +516,7 @@ private:
    int shift_backward(int basepos)
    {
        if (basepos == 0)
-           basepos = m_iSize;
+           basepos = m_iSize-1;
        return --basepos;
    }
 
@@ -515,7 +526,7 @@ private:
 
    int m_iReadHead;                  // HEAD: first packet available for reading
    atomic::atomic<int> m_iReadTail;  // contiguous-TAIL: last packet available for reading
-   int m_iPastAckDelta;              // delta between contiguous-TAIL and reception-TAIL
+   int m_iPastTailDelta;              // delta between contiguous-TAIL and reception-TAIL
    int m_iRefCount;                  // reference counter for shared buffer
 
    // This is atomic so that access doesn't require locking.

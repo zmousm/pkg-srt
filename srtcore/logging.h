@@ -46,6 +46,7 @@ written by
 #include "utilities.h"
 #include "threadname.h"
 #include "logging_api.h"
+#include "logsupport.hpp"
 #include "srt_compat.h"
 
 #ifdef __GNUC__
@@ -63,11 +64,26 @@ written by
 // Usage: LOGP(mglog.Debug, param1, param2, param3);
 #define LOGP(logdes, ...) if (logdes.CheckEnabled()) logdes.printloc(__FILE__, __LINE__, __FUNCTION__,##__VA_ARGS__)
 
+#ifndef ENABLE_DEBUG
+#define LOGS(...)
+#else
+
+// Note: can't use CGuard here because CGuard uses LOGS in itself and will cause infinite recursion.
+#define LOGS(stream, args) if (::srt_logger_config.max_level == logging::LogLevel::debug) { \
+    char tn[512]; g_gmtx.lock(); ThreadName::get(tn); std::ostringstream log; \
+    log << logging::FormatTime(CTimer::getTime()) << "/" << tn << "##: "; \
+    args; \
+    log << std::endl; stream << log.str(); \
+    g_gmtx.unlock(); \
+}
+#endif
+
 #else
 
 #define LOGC(...)
 #define LOGF(...)
 #define LOGP(...)
+#define LOGS(...)
 
 #endif
 

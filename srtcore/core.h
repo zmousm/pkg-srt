@@ -165,7 +165,7 @@ template <class ExecutorType>
 void SRT_tsbpdLoop(
         ExecutorType* self,
         SRTSOCKET sid,
-        pthread_mutex_t& lock);
+        CGuard& lock);
 
 class CUDTGroup
 {
@@ -501,7 +501,7 @@ public: // internal API
     void addressAndSend(CPacket& pkt);
     void sendSrtMsg(int cmd, uint32_t *srtdata_in = NULL, int srtlen_in = 0);
 
-    bool isTsbPd() { return m_bOPT_TsbPd; }
+    bool isOPT_TsbPd() { return m_bOPT_TsbPd; }
     int RTT() { return m_iRTT; }
     int32_t sndSeqNo() { return m_iSndCurrSeqNo; }
     int32_t schedSeqNo() { return m_iSndNextSeqNo; }
@@ -567,6 +567,7 @@ public: // internal API
     CUDTUnited* uglobal() { return &s_UDTUnited; } // needed by tsbpdLoop
     std::set<int>& pollset() { return m_sPollID; }
     bool forgetPacketsUpTo(int32_t skiptoseqno);
+    void signalNewPacketAtHead();
 
     SRTU_PROPERTY_RO(bool, closing, m_bClosing);
     SRTU_PROPERTY_RO(CRcvBuffer*, rcvBuffer, m_pRcvBuffer);
@@ -1007,30 +1008,7 @@ private: // Receiving related data
     uint32_t m_lPeerSrtVersion;
 
     bool m_bTsbPd;                               // Peer sends TimeStamp-Based Packet Delivery Packets 
-    bool m_bGroupTsbPd;
-
-    void setTsbPd(bool val)
-    {
-        if (m_bOPT_GroupConnect)
-        {
-            m_bGroupTsbPd = val; // Take the values from user-configurable options
-            m_bTsbPd = false;
-        }
-        else
-        {
-            m_bTsbPd = val; // Take the values from user-configurable options
-            m_bGroupTsbPd = false;
-        }
-    }
-
-    bool isTsbpPd()
-    {
-        // Either of these means TSBPD is on.
-        // Two distinct flags are used to distinguish the
-        // situation of using a single-link TSBPD or group-link TSBPD
-        // (one TSBPD common for all links in the group).
-        return m_bTsbPd || m_bGroupTsbPd;
-    }
+    bool m_bGroupTsbPd;                          // TSBPD should be used for GROUP RECEIVER instead.
 
     pthread_t m_RcvTsbPdThread;                  // Rcv TsbPD Thread handle
     pthread_cond_t m_RcvTsbPdCond;

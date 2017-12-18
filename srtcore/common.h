@@ -566,6 +566,15 @@ public:
    static void createCond(pthread_cond_t& cond);
    static void releaseCond(pthread_cond_t& cond);
 
+#if ENABLE_LOGGING
+
+   // Turned explicitly to string because this is exposed only for logging purposes.
+   std::string show_mutex()
+   {
+       return Sprint(&m_Mutex);
+   }
+#endif
+
 private:
 
    void Lock()
@@ -582,6 +591,8 @@ private:
    int m_iLocked;                       // Locking status
 
    CGuard& operator=(const CGuard&);
+
+   friend class CCondDelegate;
 };
 
 class InvertedGuard
@@ -606,6 +617,43 @@ public:
     }
 };
 
+// This class is used for condition variable combined with mutex by different ways.
+// This should provide a cleaner API around locking with debug-logging inside.
+class CCondDelegate
+{
+    pthread_cond_t* m_cond;
+    pthread_mutex_t* m_mutex;
+    bool nolock;
+
+public:
+
+    enum Nolock { NOLOCK };
+
+    // Locked version: must be declared only after the declaration of CGuard,
+    // which has locked the mutex. On this delegate you should call only
+    // signal_locked() and pass the CGuard variable that should remain locked.
+    // Also wait() and wait_until() can be used only with this socket.
+    CCondDelegate(pthread_cond_t& cond, CGuard& g);
+
+    // This is only for one-shot signaling. This doesn't need a CGuard
+    // variable, only the mutex itself. Only lock_signal() can be used.
+    CCondDelegate(pthread_cond_t& cond, pthread_mutex_t& mutex, Nolock);
+
+    // Wait indefinitely, until getting a signal on CV.
+    void wait();
+
+    // Wait only up to given time (seconds since epoch, the same unit as
+    // for CTimer::getTime()).
+    // Return: true, if interrupted by a signal. False if exit on timeout.
+    bool wait_until(uint64_t timestamp);
+
+    // You can signal using two methods:
+    // - lock_signal: expect the mutex NOT locked, lock it, signal, then unlock.
+    // - signal: expect the mutex locked, so only issue a signal, but you must pass the CGuard that keeps the lock.
+    void lock_signal();
+    void signal_locked(CGuard& lk);
+    void signal_relaxed();
+};
 
 ////////////////////////////////////////////////////////////////////////////////
 

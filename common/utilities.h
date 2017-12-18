@@ -361,6 +361,14 @@ auto map_getp(Map& m, const Key& key) -> typename Map::mapped_type*
 
 #else
 
+template <class Arg1>
+inline std::string Sprint(const Arg1& arg)
+{
+    std::ostringstream sout;
+    sout << arg;
+    return sout.str();
+}
+
 template <class Type>
 ref_t<Type> Ref(Type& arg)
 {
