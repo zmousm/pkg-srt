@@ -1,3 +1,13 @@
+srt (1.2.2-2~bpo7+1~1.gbpae47e8) wheezy-backports; urgency=medium
+
+  ** SNAPSHOT build @ae47e827553e95ce7d95dd09d72820b5aeeca2b3 **
+
+  * Add debian/patches/01_cmake_downgrade
+  * Bump cmake build-dep version to wheezy bpo
+  * Rebuild for wheezy-backports.
+
+ -- Zenon Mousmoulas <zmousm@noc.grnet.gr>  Sat, 27 Jan 2018 02:41:07 +0200
+
 srt (1.2.2-1~bpo7+1~1.gbp70a7be) wheezy-backports; urgency=medium
 
   ** SNAPSHOT build @70a7be8dcac1429f58e0ae06464460fa4b01b836 **
