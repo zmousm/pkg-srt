@@ -21,7 +21,7 @@ Last-Update: 2017-10-24
  set (CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/scripts")
  include(haiUtil)
  include(FindPkgConfig)
-@@ -278,10 +280,10 @@ if (NOT haicrypt_libspec STREQUAL VIRTUA
+@@ -315,10 +317,10 @@ if (NOT haicrypt_libspec STREQUAL VIRTUA
  
  	install(TARGETS ${TARGET_haicrypt}
  		RUNTIME DESTINATION bin
@@ -35,7 +35,7 @@ Last-Update: 2017-10-24
  	if (WIN32)
  		install(FILES ${HEADERS_srt_win32} DESTINATION include/srt/win)
  	endif()
-@@ -368,10 +370,10 @@ endif()
+@@ -403,10 +405,10 @@ endif()
  
  install(TARGETS ${TARGET_srt}
  		RUNTIME DESTINATION bin
@@ -49,7 +49,7 @@ Last-Update: 2017-10-24
  if (WIN32 AND TARGET_haicrypt STREQUAL TARGET_srt)
  	install(FILES ${HEADERS_srt_win32} DESTINATION include/srt/win)
  endif()
-@@ -411,9 +413,9 @@ join_arguments(SRT_LIBS_PRIVATE ${SRT_LI
+@@ -446,9 +448,9 @@ join_arguments(SRT_LIBS_PRIVATE ${SRT_LI
  
  # haisrt.pc left temporarily for backward compatibility. To be removed in future!
  configure_file(scripts/haisrt.pc.in haisrt.pc @ONLY)
