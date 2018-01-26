@@ -1,3 +1,18 @@
+srt (1.2.2-1~bpo8+1~1.gbp6663e5) jessie-backports; urgency=medium
+
+  ** SNAPSHOT build @bc66fdb1aa6718020c738493a3e98eb01ba7d54f **
+
+  [ Derfel ]
+  * Enable support for debian multi-arch.
+  * Fix buil-dep.
+
+  [ Zenon Mousmoulas ]
+  * Refresh debian/patches/00_cmake_multiarch
+  * Switch to dpkg-source 3.0 (quilt) format
+  * Rebuild for jessie-backports.
+
+ -- Zenon Mousmoulas <zmousm@noc.grnet.gr>  Fri, 26 Jan 2018 18:03:10 +0200
+
 srt (1.2.0-1) unstable; urgency=medium
 
   * Initial release.
