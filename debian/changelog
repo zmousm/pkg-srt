@@ -1,3 +1,18 @@
+srt (1.2.2-1~bpo7+1~1.gbp70a7be) wheezy-backports; urgency=medium
+
+  ** SNAPSHOT build @70a7be8dcac1429f58e0ae06464460fa4b01b836 **
+
+  [ Derfel ]
+  * Enable support for debian multi-arch.
+  * Fix buil-dep.
+
+  [ Zenon Mousmoulas ]
+  * Refresh debian/patches/00_cmake_multiarch
+  * Switch to dpkg-source 3.0 (quilt) format
+  * Rebuild for wheezy-backports.
+
+ -- Zenon Mousmoulas <zmousm@noc.grnet.gr>  Sat, 27 Jan 2018 01:34:04 +0200
+
 srt (1.2.0-1) unstable; urgency=medium
 
   * Initial release.
