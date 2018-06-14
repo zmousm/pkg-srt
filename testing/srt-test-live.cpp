@@ -83,19 +83,6 @@ using namespace std;
 
 map<string,string> g_options;
 
-string Option(string deflt="") { return deflt; }
-
-template <class... Args>
-string Option(string deflt, string key, Args... further_keys)
-{
-    map<string, string>::iterator i = g_options.find(key);
-    if ( i == g_options.end() )
-        return Option(deflt, further_keys...);
-    return i->second;
-}
-
-ostream* cverb = &cout;
-
 struct ForcedExit: public std::runtime_error
 {
     ForcedExit(const std::string& arg):
@@ -284,8 +271,10 @@ int main( int argc, char** argv )
         o_stats     ("", "s",   "stats", "stats-report-frequency"),
         o_logint    ("",        "loginternal"),
         o_skipflush ("", "sf",  "skipflush"),
+        o_stoptime  ("", "d", "stoptime"),
         o_group     ("<URIs...> Using multiple SRT connections as redundancy group", "g"),
-        o_help      ("", "?",   "help", "-help");
+        o_help      ("", "?",   "help", "-help")
+            ;
 
 
     vector<OptionScheme> optargs = {
@@ -300,6 +289,7 @@ int main( int argc, char** argv )
         { o_logfile, OptionScheme::ARG_ONE },
         { o_stats, OptionScheme::ARG_ONE },
         { o_skipflush, OptionScheme::ARG_NONE },
+        { o_stoptime, OptionScheme::ARG_ONE },
         { o_group, OptionScheme::ARG_VAR }
     };
 
@@ -452,23 +442,7 @@ int main( int argc, char** argv )
     bool skip_flushing = OptionPresent(params, o_skipflush);
 
     // Options that require integer conversion
-    size_t bandwidth;
-    size_t stoptime;
-
-    try
-    {
-        // XXX Translate these options into the new Option Library!
-        bandwidth = stoul(Option("0", "b", "bandwidth", "bitrate"));
-        transmit_bw_report = stoul(Option("0", "r", "report", "bandwidth-report", "bitrate-report"));
-        transmit_stats_report = stoi(Option("0", "s", "stats", "stats-report-frequency"));
-        stoptime = stoul(Option("0", "d", "stoptime"));
-    }
-    catch (std::invalid_argument)
-    {
-        cerr << "ERROR: Incorrect integer number specified for an option.\n";
-        return 1;
-    }
-
+    size_t stoptime = Option<OutNumber>(params, "0", o_stoptime);
     std::ofstream logfile_stream; // leave unused if not set
 
     srt_setloglevel(SrtParseLogLevel(loglevel));
@@ -581,7 +555,7 @@ int main( int argc, char** argv )
     // Now loop until broken
     BandwidthGuard bw(bandwidth);
 
-    Verb() << "STARTING TRANSMISSION: '" << params[0] << "' --> '" << params[1] << "'";
+    Verb() << "STARTING TRANSMISSION: '" << args[0] << "' --> '" << args[1] << "'";
 
     // After the time has been spent in the creation
     // (including waiting for connection)

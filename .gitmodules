@@ -1,0 +1,6 @@
+[submodule "submodules/tbb"]
+	path = submodules/tbb
+	url = ../../01org/tbb.git
+[submodule "submodules/atomic"]
+	path = submodules/atomic
+	url = ../../mbitsnbites/atomic.git

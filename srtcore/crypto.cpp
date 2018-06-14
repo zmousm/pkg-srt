@@ -590,7 +590,7 @@ bool CCryptoControl::init(HandshakeSide side, bool bidirectional)
     return true;
 }
 
-void CCryptoControl::close() 
+void CCryptoControl::wipe() 
 {
     /* Wipeout secrets */
     memset(&m_KmSecret, 0, sizeof(m_KmSecret));
@@ -748,6 +748,7 @@ EncryptionStatus CCryptoControl::decrypt(ref_t<CPacket> r_packet)
 
 CCryptoControl::~CCryptoControl()
 {
+    wipe(); // in case it's forgotten
     if (m_hSndCrypto)
     {
         HaiCrypt_Close(m_hSndCrypto);

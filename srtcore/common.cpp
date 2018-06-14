@@ -67,6 +67,10 @@ modified by
    #include <win/wintime.h>
 #endif
 
+#if ENABLE_LOGGING
+#include <iostream>
+#endif
+
 #include <string>
 #include <sstream>
 #include <cmath>
@@ -75,10 +79,15 @@ modified by
 #include "srt.h"
 #include "md5.h"
 #include "common.h"
+#include "netinet_any.h"
 #include "logging.h"
 #include "threadname.h"
+#include "api.h"
 
 #include <srt_compat.h> // SysStrError
+
+using namespace std;
+
 
 bool CTimer::m_bUseMicroSecond = false;
 uint64_t CTimer::s_ullCPUFrequency = CTimer::readCPUFrequency();
@@ -308,6 +317,24 @@ int CTimer::condTimedWaitUS(pthread_cond_t* cond, pthread_mutex_t* mutex, uint64
     return pthread_cond_timedwait(cond, mutex, &timeout);
 }
 
+#ifdef ENABLE_DEBUG
+struct CGuardLogMutex
+{
+    pthread_mutex_t mx;
+    CGuardLogMutex()
+    {
+        pthread_mutex_init(&mx, NULL);
+    }
+
+    ~CGuardLogMutex()
+    {
+        pthread_mutex_destroy(&mx);
+    }
+
+    void lock() { pthread_mutex_lock(&mx); }
+    void unlock() { pthread_mutex_unlock(&mx); }
+} g_gmtx;
+#endif
 
 // Automatically lock in constructor
 CGuard::CGuard(pthread_mutex_t& lock, bool shouldwork):
@@ -315,25 +342,28 @@ CGuard::CGuard(pthread_mutex_t& lock, bool shouldwork):
     m_iLocked(-1)
 {
     if (shouldwork)
-        m_iLocked = pthread_mutex_lock(&m_Mutex);
+    {
+        LOGS(cerr, log << "CGuard: { LOCK:" << &m_Mutex << " ...");
+        Lock();
+        LOGS(cerr, log << "... " << &m_Mutex << " locked.");
+    }
+    else
+    {
+        LOGS(cerr, log << "CGuard: LOCK NOT DONE (not required):" << &m_Mutex);
+    }
 }
 
 // Automatically unlock in destructor
 CGuard::~CGuard()
 {
     if (m_iLocked == 0)
-        pthread_mutex_unlock(&m_Mutex);
-}
-
-// After calling this on a scoped lock wrapper (CGuard),
-// the mutex will be unlocked right now, and no longer
-// in destructor
-void CGuard::forceUnlock()
-{
-    if (m_iLocked == 0)
     {
-        pthread_mutex_unlock(&m_Mutex);
-        m_iLocked = -1;
+        LOGS(cerr, log << "CGuard: } UNLOCK:" << &m_Mutex);
+        Unlock();
+    }
+    else
+    {
+        LOGS(cerr, log << "CGuard: UNLOCK NOT DONE (not locked):" << &m_Mutex);
     }
 }
 
@@ -349,7 +379,14 @@ int CGuard::leaveCS(pthread_mutex_t& lock)
 
 void CGuard::createMutex(pthread_mutex_t& lock)
 {
-    pthread_mutex_init(&lock, NULL);
+    pthread_mutexattr_t* pattr = NULL;
+#if ENABLE_DEBUG
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
+    pattr = &attr;
+#endif
+    pthread_mutex_init(&lock, pattr);
 }
 
 void CGuard::releaseMutex(pthread_mutex_t& lock)
@@ -365,6 +402,102 @@ void CGuard::createCond(pthread_cond_t& cond)
 void CGuard::releaseCond(pthread_cond_t& cond)
 {
     pthread_cond_destroy(&cond);
+}
+
+CCondDelegate::CCondDelegate(pthread_cond_t& cond, CGuard& g): m_cond(&cond), m_mutex(&g.m_Mutex), nolock(false)
+{
+#if ENABLE_DEBUG
+    // This constructor expects that the mutex is locked, and 'g' should designate
+    // the CGuard variable that holds the mutex. Test in debug mode whether the
+    // mutex is locked
+
+    int lockst = pthread_mutex_trylock(m_mutex);
+    if (lockst == 0)
+    {
+        pthread_mutex_unlock(m_mutex);
+        LOGS(std::cerr, log << "CCond: Mutex in CGuard IS NOT LOCKED.");
+        return;
+    }
+#endif
+    // XXX it would be nice to check whether the owner is also current thread
+    // but this can't be done portable way.
+
+    // When constructed by this constructor, the user is expected
+    // to only call signal_locked() function. You should pass the same guard
+    // variable that you have used for construction as its argument.
+}
+
+CCondDelegate::CCondDelegate(pthread_cond_t& cond, pthread_mutex_t& mutex, Nolock): m_cond(&cond), m_mutex(&mutex), nolock(true)
+{
+    // We expect that the mutex is NOT locked at this moment by the current thread,
+    // but it is perfectly ok, if the mutex is locked by another thread. We'll just wait.
+
+    // When constructed by this constructor, the user is expected
+    // to only call lock_signal() function.
+}
+
+void CCondDelegate::wait()
+{
+    LOGS(cerr, log << "Cond: WAIT:" << m_cond << " UNLOCK:" << m_mutex);
+    THREAD_PAUSED();
+    pthread_cond_wait(m_cond, m_mutex);
+    THREAD_RESUMED();
+    LOGS(cerr, log << "Cond: CAUGHT:" << m_cond << " LOCKED:" << m_mutex);
+}
+
+bool CCondDelegate::wait_until(uint64_t timestamp)
+{
+    timespec locktime;
+    locktime.tv_sec = timestamp / 1000000;
+    locktime.tv_nsec = (timestamp % 1000000) * 1000;
+    LOGS(cerr, log << "Cond: WAIT:" << m_cond << " UNLOCK:" << m_mutex << " - until TS=" << logging::FormatTime(timestamp));
+    THREAD_PAUSED();
+    bool signaled = pthread_cond_timedwait(m_cond, m_mutex, &locktime) != ETIMEDOUT;
+    THREAD_RESUMED();
+    LOGS(cerr, log << "Cond: CAUGHT:" << m_cond << " LOCKED:" << m_mutex << " REASON:" << (signaled ? "SIGNAL" : "TIMEOUT"));
+    return signaled;
+}
+
+void CCondDelegate::lock_signal()
+{
+    // We expect nolock == true.
+#if ENABLE_DEBUG
+    if (!nolock)
+    {
+        LOGS(cerr, log << "Cond: INTERNAL ERROR: lock_signal done on LOCKED Cond.");
+        return;
+    }
+#endif
+    CGuard lk(*m_mutex);
+    LOGS(cerr, log << "Cond: SIGNAL:" << m_cond);
+    pthread_cond_signal(m_cond);
+}
+
+void CCondDelegate::signal_locked(CGuard& lk SRT_ATR_UNUSED)
+{
+    // We expect nolock == false.
+#if ENABLE_DEBUG
+    if (nolock)
+    {
+        LOGS(cerr, log << "Cond: INTERNAL ERROR: signal done on no-lock-checked Cond.");
+        return;
+    }
+
+    if (&lk.m_Mutex != m_mutex)
+    {
+        LOGS(cerr, log << "Cond: INTERNAL ERROR: signal declares CGuard.mutex=" << (&lk.m_Mutex) << " but Cond.mutex=" << m_mutex);
+        return;
+    }
+    LOGS(cerr, log << "Cond: SIGNAL:" << m_cond << " (with locked:" << (&m_mutex) << ")");
+#endif
+
+    pthread_cond_signal(m_cond);
+}
+
+void CCondDelegate::signal_relaxed()
+{
+    LOGS(cerr, log << "Cond: SIGNAL:" << m_cond << " (no lock checking)");
+    pthread_cond_signal(m_cond);
 }
 
 //
@@ -659,33 +792,32 @@ bool CIPAddress::ipcmp(const sockaddr* addr1, const sockaddr* addr2, int ver)
    return false;
 }
 
-void CIPAddress::ntop(const sockaddr* addr, uint32_t ip[4], int ver)
+void CIPAddress::ntop(const sockaddr_any& addr, uint32_t ip[4])
 {
-   if (AF_INET == ver)
-   {
-      sockaddr_in* a = (sockaddr_in*)addr;
-      ip[0] = a->sin_addr.s_addr;
-   }
-   else
-   {
-      sockaddr_in6* a = (sockaddr_in6*)addr;
+    if (addr.family() == AF_INET)
+    {
+        ip[0] = addr.sin.sin_addr.s_addr;
+    }
+    else
+    {
+      const sockaddr_in6* a = &addr.sin6;
       ip[3] = (a->sin6_addr.s6_addr[15] << 24) + (a->sin6_addr.s6_addr[14] << 16) + (a->sin6_addr.s6_addr[13] << 8) + a->sin6_addr.s6_addr[12];
       ip[2] = (a->sin6_addr.s6_addr[11] << 24) + (a->sin6_addr.s6_addr[10] << 16) + (a->sin6_addr.s6_addr[9] << 8) + a->sin6_addr.s6_addr[8];
       ip[1] = (a->sin6_addr.s6_addr[7] << 24) + (a->sin6_addr.s6_addr[6] << 16) + (a->sin6_addr.s6_addr[5] << 8) + a->sin6_addr.s6_addr[4];
       ip[0] = (a->sin6_addr.s6_addr[3] << 24) + (a->sin6_addr.s6_addr[2] << 16) + (a->sin6_addr.s6_addr[1] << 8) + a->sin6_addr.s6_addr[0];
-   }
+    }
 }
 
-void CIPAddress::pton(sockaddr* addr, const uint32_t ip[4], int ver)
+void CIPAddress::pton(ref_t<sockaddr_any> addr, const uint32_t ip[4], int ver)
 {
    if (AF_INET == ver)
    {
-      sockaddr_in* a = (sockaddr_in*)addr;
+      sockaddr_in* a = &addr.get().sin;
       a->sin_addr.s_addr = ip[0];
    }
    else
    {
-      sockaddr_in6* a = (sockaddr_in6*)addr;
+      sockaddr_in6* a = &addr.get().sin6;
       for (int i = 0; i < 4; ++ i)
       {
          a->sin6_addr.s6_addr[i * 4] = ip[i] & 0xFF;
@@ -784,7 +916,8 @@ std::string MessageTypeStr(UDTMessageType mt, uint32_t extt)
         "EXT:kmreq",
         "EXT:kmrsp",
         "EXT:sid",
-        "EXT:smoother"
+        "EXT:smoother",
+        "EXT:group"
     };
 
 
@@ -804,15 +937,13 @@ std::string MessageTypeStr(UDTMessageType mt, uint32_t extt)
 
 std::string ConnectStatusStr(EConnectStatus cst)
 {
-    return (cst == CONN_CONTINUE
-        ? "INDUCED/CONCLUDING"
-        : cst == CONN_ACCEPT
-        ? "ACCEPTED"
-        : cst == CONN_RENDEZVOUS
-        ? "RENDEZVOUS (HSv5)"
-        : cst == CONN_AGAIN
-        ? "AGAIN"
-        : "REJECTED");
+    return
+          cst == CONN_CONTINUE ? "INDUCED/CONCLUDING"
+        : cst == CONN_RUNNING ? "RUNNING"
+        : cst == CONN_ACCEPT ? "ACCEPTED"
+        : cst == CONN_RENDEZVOUS ? "RENDEZVOUS (HSv5)"
+        : cst == CONN_AGAIN ? "AGAIN"
+        : "REJECTED";
 }
 
 std::string TransmissionEventStr(ETransmissionEvent ev)

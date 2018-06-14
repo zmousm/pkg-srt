@@ -53,7 +53,9 @@ modified by
 #ifndef __UDT_COMMON_H__
 #define __UDT_COMMON_H__
 
-
+#include <list>
+#include <vector>
+#include <queue>
 #include <cstdlib>
 #ifndef WIN32
    #include <sys/time.h>
@@ -63,8 +65,9 @@ modified by
    //#include <windows.h>
 #endif
 #include <pthread.h>
-#include "udt.h"
+#include "srt.h"
 #include "utilities.h"
+#include "netinet_any.h"
 
 enum UDTSockType
 {
@@ -146,13 +149,21 @@ enum EConnectStatus
     CONN_REJECT = -1,    //< Error during processing handshake.
     CONN_CONTINUE = 1,   //< induction->conclusion phase
     CONN_RENDEZVOUS = 2, //< pass to a separate rendezvous processing (HSv5 only)
+    CONN_RUNNING = 10,   //< no connection in progress, already connected
     CONN_AGAIN = -2      //< No data was read, don't change any state.
+};
+
+enum EConnectMethod
+{
+    COM_ASYNCHRO,
+    COM_SYNCHRO
 };
 
 std::string ConnectStatusStr(EConnectStatus est);
 
 
 const int64_t BW_INFINITE =  30000000/8;         //Infinite=> 30Mbps
+
 
 
 enum ETransmissionEvent
@@ -523,6 +534,31 @@ public:
    ~CGuard();
 
 public:
+
+   // The force-Lock/Unlock mechanism can be used to forcefully
+   // change the lock on the CGuard object. This is in order to
+   // temporarily change the lock status on the given mutex, but
+   // still do the right job in the destructor. For example, if
+   // a lock has been forcefully unlocked by forceUnlock, then
+   // the CGuard object will not try to unlock it in the destructor,
+   // but again, if the forceLock() was done again, the destructor
+   // will still unlock the mutex.
+   void forceLock()
+   {
+       if (m_iLocked == 0)
+           return;
+       Lock();
+   }
+
+   void forceUnlock()
+   {
+       if (m_iLocked == 0)
+       {
+           m_iLocked = -1;
+           Unlock();
+       }
+   }
+
    static int enterCS(pthread_mutex_t& lock);
    static int leaveCS(pthread_mutex_t& lock);
 
@@ -532,13 +568,33 @@ public:
    static void createCond(pthread_cond_t& cond);
    static void releaseCond(pthread_cond_t& cond);
 
-   void forceUnlock();
+#if ENABLE_LOGGING
+
+   // Turned explicitly to string because this is exposed only for logging purposes.
+   std::string show_mutex()
+   {
+       return Sprint(&m_Mutex);
+   }
+#endif
 
 private:
+
+   void Lock()
+   {
+       m_iLocked = pthread_mutex_lock(&m_Mutex);
+   }
+
+   void Unlock()
+   {
+        pthread_mutex_unlock(&m_Mutex);
+   }
+
    pthread_mutex_t& m_Mutex;            // Alias name of the mutex to be protected
    int m_iLocked;                       // Locking status
 
    CGuard& operator=(const CGuard&);
+
+   friend class CCondDelegate;
 };
 
 class InvertedGuard
@@ -561,6 +617,44 @@ public:
 
         CGuard::enterCS(*m_pMutex);
     }
+};
+
+// This class is used for condition variable combined with mutex by different ways.
+// This should provide a cleaner API around locking with debug-logging inside.
+class CCondDelegate
+{
+    pthread_cond_t* m_cond;
+    pthread_mutex_t* m_mutex;
+    bool nolock;
+
+public:
+
+    enum Nolock { NOLOCK };
+
+    // Locked version: must be declared only after the declaration of CGuard,
+    // which has locked the mutex. On this delegate you should call only
+    // signal_locked() and pass the CGuard variable that should remain locked.
+    // Also wait() and wait_until() can be used only with this socket.
+    CCondDelegate(pthread_cond_t& cond, CGuard& g);
+
+    // This is only for one-shot signaling. This doesn't need a CGuard
+    // variable, only the mutex itself. Only lock_signal() can be used.
+    CCondDelegate(pthread_cond_t& cond, pthread_mutex_t& mutex, Nolock);
+
+    // Wait indefinitely, until getting a signal on CV.
+    void wait();
+
+    // Wait only up to given time (seconds since epoch, the same unit as
+    // for CTimer::getTime()).
+    // Return: true, if interrupted by a signal. False if exit on timeout.
+    bool wait_until(uint64_t timestamp);
+
+    // You can signal using two methods:
+    // - lock_signal: expect the mutex NOT locked, lock it, signal, then unlock.
+    // - signal: expect the mutex locked, so only issue a signal, but you must pass the CGuard that keeps the lock.
+    void lock_signal();
+    void signal_locked(CGuard& lk);
+    void signal_relaxed();
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -617,6 +711,13 @@ public:
        return seq - dec;
    }
 
+   static int32_t maxseq(int32_t seq1, int32_t seq2)
+   {
+       if (seqcmp(seq1, seq2) < 0)
+           return seq2;
+       return seq1;
+   }
+
 public:
    static const int32_t m_iSeqNoTH = 0x3FFFFFFF;             // threshold for comparing seq. no.
    static const int32_t m_iMaxSeqNo = 0x7FFFFFFF;            // maximum sequence number used in UDT
@@ -643,8 +744,8 @@ public:
 struct CIPAddress
 {
    static bool ipcmp(const struct sockaddr* addr1, const struct sockaddr* addr2, int ver = AF_INET);
-   static void ntop(const struct sockaddr* addr, uint32_t ip[4], int ver = AF_INET);
-   static void pton(struct sockaddr* addr, const uint32_t ip[4], int ver = AF_INET);
+   static void ntop(const struct sockaddr_any& addr, uint32_t ip[4]);
+   static void pton(ref_t<sockaddr_any> addr, const uint32_t ip[4], int sa_family);
    static std::string show(const struct sockaddr* adr);
 };
 

@@ -83,7 +83,7 @@ int main( int argc, char** argv )
 
     string verbo = Option<OutString>(params, "no", o_verbose);
     if ( verbo == "" || !false_names.count(verbo) )
-        ::transmit_verbose = true;
+        Verbose::on = true;
 
     string bs = Option<OutString>(params, "", o_buffer);
     if ( bs != "" )

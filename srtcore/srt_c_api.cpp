@@ -26,35 +26,38 @@ written by
 using namespace std;
 
 
+using namespace std;
+
+
 extern "C" {
 
 int srt_startup() { return CUDT::startup(); }
 int srt_cleanup() { return CUDT::cleanup(); }
 
-SRTSOCKET srt_socket(int af, int type, int protocol) { return CUDT::socket(af, type, protocol); }
-SRTSOCKET srt_create_socket()
-{
-    // XXX This must include rework around m_iIPVersion. This must be
-    // abandoned completely and all "IP VERSION" thing should rely on
-    // the exact specification in the 'sockaddr' objects passed to other functions,
-    // that is, the "current IP Version" remains undefined until any of
-    // srt_bind() or srt_connect() function is done. And when any of these
-    // functions are being called, the IP version is contained in the
-    // sockaddr object passed there.
+// Socket creation.
+SRTSOCKET srt_socket(int , int , int ) { return CUDT::socket(); }
+SRTSOCKET srt_create_socket() { return CUDT::socket(); }
 
-    // Until this rework is done, srt_create_socket() will set the
-    // default AF_INET family.
+// Group management.
+SRTSOCKET srt_create_group(SRT_GROUP_TYPE gt) { return CUDT::createGroup(gt); }
+int srt_include(SRTSOCKET socket, SRTSOCKET group) { return CUDT::addSocketToGroup(socket, group); }
+int srt_exclude(SRTSOCKET socket) { return CUDT::removeSocketFromGroup(socket); }
+SRTSOCKET srt_groupof(SRTSOCKET socket) { return CUDT::getGroupOfSocket(socket); }
+// int srt_bind_multicast()
 
-    // Note that all arguments except the first one here are ignored.
-    return CUDT::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-}
-
+// Binding and connection management
 int srt_bind(SRTSOCKET u, const struct sockaddr * name, int namelen) { return CUDT::bind(u, name, namelen); }
-int srt_bind_peerof(SRTSOCKET u, UDPSOCKET udpsock) { return CUDT::bind(u, udpsock); }
+int srt_bind_acquire(SRTSOCKET u, int udpsock) { return CUDT::bind(u, udpsock); }
 int srt_listen(SRTSOCKET u, int backlog) { return CUDT::listen(u, backlog); }
 SRTSOCKET srt_accept(SRTSOCKET u, struct sockaddr * addr, int * addrlen) { return CUDT::accept(u, addr, addrlen); }
 int srt_connect(SRTSOCKET u, const struct sockaddr * name, int namelen) { return CUDT::connect(u, name, namelen, 0); }
 int srt_connect_debug(SRTSOCKET u, const struct sockaddr * name, int namelen, int32_t forced_isn) { return CUDT::connect(u, name, namelen, forced_isn); }
+int srt_connect_bind(SRTSOCKET u,
+        const struct sockaddr* source, int source_len,
+        const struct sockaddr* target, int target_len)
+{
+    return CUDT::connect(u, source, source_len, target, target_len);
+}
 
 int srt_rendezvous(SRTSOCKET u, const struct sockaddr* local_name, int local_namelen,
         const struct sockaddr* remote_name, int remote_namelen)
@@ -108,8 +111,8 @@ int srt_getsockflag(SRTSOCKET u, SRT_SOCKOPT opt, void* optval, int* optlen)
 int srt_setsockflag(SRTSOCKET u, SRT_SOCKOPT opt, const void* optval, int optlen)
 { return CUDT::setsockopt(u, 0, opt, optval, optlen); }
 
-int srt_send(SRTSOCKET u, const char * buf, int len) { return CUDT::send(u, buf, len, 0); }
-int srt_recv(SRTSOCKET u, char * buf, int len) { return CUDT::recv(u, buf, len, 0); }
+int srt_send(SRTSOCKET u, const char * buf, int len) { return CUDT::send(u, buf, len); }
+int srt_recv(SRTSOCKET u, char * buf, int len) { return CUDT::recv(u, buf, len); }
 int srt_sendmsg(SRTSOCKET u, const char * buf, int len, int ttl, int inorder) { return CUDT::sendmsg(u, buf, len, ttl, 0!=  inorder); }
 int srt_recvmsg(SRTSOCKET u, char * buf, int len) { uint64_t ign_srctime; return CUDT::recvmsg(u, buf, len, ign_srctime); }
 int64_t srt_sendfile(SRTSOCKET u, const char* path, int64_t* offset, int64_t size, int block)
@@ -144,8 +147,7 @@ int64_t srt_recvfile(SRTSOCKET u, const char* path, int64_t* offset, int64_t siz
     return ret;
 }
 
-extern const SRT_MSGCTRL srt_msgctrl_default = { 0, -1, false, 0, 0, 0, 0 };
-
+extern const SRT_MSGCTRL srt_msgctrl_default = { 0, -1, false, 0, 0, 0, 0, 0, 0 };
 void srt_msgctrl_init(SRT_MSGCTRL* mctrl)
 {
     *mctrl = srt_msgctrl_default;

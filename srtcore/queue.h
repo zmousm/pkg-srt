@@ -65,18 +65,43 @@ modified by
 #include <vector>
 
 class CUDT;
+class CUnitQueue;
 
 struct CUnit
 {
+   enum Status { FREE = 0, GOOD = 1, EXTRACTED = 2, DROPPED = 3 };
+private:
    CPacket m_Packet;		// packet
-   enum Flag { FREE = 0, GOOD = 1, PASSACK = 2, DROPPED = 3 };
-   Flag m_iFlag;			// 0: free, 1: occupied, 2: msg read but not freed (out-of-order), 3: msg dropped
+   Status m_Status;			// 0: free, 1: occupied, 2: msg read but not freed (out-of-order), 3: msg dropped
+   CUnitQueue* m_pSource;
+   uint64_t m_localTS_ms;
+
+public:
+
+   // Can't do it with a constructor because in C++03
+   // there's no possibility to call a non-default constructor
+   // when defining an array or creating a dynamic array.
+   void init(CUnitQueue* q, char* buffer)
+   {
+       m_Status = FREE;
+       m_Packet.m_pcData = buffer;
+       m_pSource = q;
+   }
+
+   CPacket& ref_packet() { return m_Packet; }
+
+   void setExtracted() { m_Status = EXTRACTED; }
+   void setDropped() { m_Status = DROPPED; }
+
+   void setGood();
+   void setFree();
+   Status status() const { return m_Status; }
 };
 
 class CUnitQueue
 {
 friend class CRcvQueue;
-friend class CRcvBuffer;
+friend class CUnit;
 
 public:
    CUnitQueue();
@@ -133,6 +158,20 @@ private:
    CUnitQueue& operator=(const CUnitQueue&);
 };
 
+
+inline void CUnit::setFree()
+{
+    m_Status = FREE;
+    -- m_pSource->m_iCount;
+}
+
+inline void CUnit::setGood()
+{
+    m_Status = GOOD;
+    ++ m_pSource->m_iCount;
+}
+
+
 struct CSNode
 {
    CUDT* m_pUDT;		// Pointer to the instance of CUDT socket
@@ -172,7 +211,7 @@ public:
       /// @param [out] pkt the next packet to be sent
       /// @return 1 if successfully retrieved, -1 if no packet found.
 
-   int pop(sockaddr*& addr, CPacket& pkt);
+   int pop(ref_t<sockaddr_any> addr, ref_t<CPacket> pkt);
 
       /// Remove UDT instance from the list.
       /// @param [in] u pointer to the UDT instance
@@ -303,14 +342,14 @@ public:
    ~CRendezvousQueue();
 
 public:
-   void insert(const SRTSOCKET& id, CUDT* u, int ipv, const sockaddr* addr, uint64_t ttl);
+   void insert(const SRTSOCKET& id, CUDT* u, const sockaddr_any& addr, uint64_t ttl);
 
    // The should_lock parameter is given here to state as to whether
    // the lock should be applied here. If called from some internals
    // and the lock IS ALREADY APPLIED, use false here to prevent
    // double locking and deadlock in result.
    void remove(const SRTSOCKET& id, bool should_lock);
-   CUDT* retrieve(const sockaddr* addr, ref_t<SRTSOCKET> id);
+   CUDT* retrieve(const sockaddr_any& addr, ref_t<SRTSOCKET> id);
 
    void updateConnStatus(EReadStatus rst, EConnectStatus, const CPacket& response);
 
@@ -320,7 +359,7 @@ private:
       SRTSOCKET m_iID;			// UDT socket ID (self)
       CUDT* m_pUDT;			// UDT instance
       int m_iIPversion;                 // IP version
-      sockaddr* m_pPeerAddr;		// UDT sonnection peer address
+      sockaddr_any m_PeerAddr;		// UDT sonnection peer address
       uint64_t m_ullTTL;			// the time that this request expires
    };
    std::list<CRL> m_lRendezvousID;      // The sockets currently in rendezvous mode
@@ -356,7 +395,7 @@ public:
       /// @param [in] packet packet to be sent out
       /// @return Size of data sent out.
 
-   int sendto(const sockaddr* addr, CPacket& packet);
+   int sendto(const sockaddr_any& addr, CPacket& packet);
 
 #ifdef SRT_ENABLE_IPOPTS
       /// Get the IP TTL.
@@ -442,14 +481,19 @@ public:
 
    int recvfrom(int32_t id, ref_t<CPacket> packet);
 
+   // Needed for affinity check (debug only)
+   pthread_t threadId() { return m_WorkerThread; }
+
+   void stopWorker();
+
 private:
    static void* worker(void* param);
    pthread_t m_WorkerThread;
    // Subroutines of worker
-   EReadStatus worker_RetrieveUnit(ref_t<int32_t> id, ref_t<CUnit*> unit, sockaddr* sa);
-   EConnectStatus worker_ProcessConnectionRequest(CUnit* unit, const sockaddr* sa);
-   EConnectStatus worker_TryAsyncRend_OrStore(int32_t id, CUnit* unit, const sockaddr* sa);
-   EConnectStatus worker_ProcessAddressedPacket(int32_t id, CUnit* unit, const sockaddr* sa);
+   EReadStatus worker_RetrieveUnit(ref_t<int32_t> id, ref_t<CUnit*> unit, ref_t<sockaddr_any> sa);
+   EConnectStatus worker_ProcessConnectionRequest(CUnit* unit, const sockaddr_any& sa);
+   EConnectStatus worker_TryAsyncRend_OrStore(int32_t id, CUnit* unit, const sockaddr_any& sa);
+   EConnectStatus worker_ProcessAddressedPacket(int32_t id, CUnit* unit, const sockaddr_any& sa);
 
 private:
    CUnitQueue m_UnitQueue;		// The received packet queue
@@ -468,7 +512,7 @@ private:
    int setListener(CUDT* u);
    void removeListener(const CUDT* u);
 
-   void registerConnector(const SRTSOCKET& id, CUDT* u, int ipv, const sockaddr* addr, uint64_t ttl);
+   void registerConnector(const SRTSOCKET& id, CUDT* u, const sockaddr_any& addr, uint64_t ttl);
    void removeConnector(const SRTSOCKET& id, bool should_lock = true);
 
    void setNewEntry(CUDT* u);
@@ -502,7 +546,7 @@ struct CMultiplexer
    CTimer* m_pTimer;		// The timer
 
    int m_iPort;			// The UDP port number of this multiplexer
-   int m_iIPversion;		// IP version
+   int m_iFamily;		// Address family (AF_INET or AF_INET6)
 #ifdef SRT_ENABLE_IPOPTS
    int m_iIpTTL;
    int m_iIpToS;

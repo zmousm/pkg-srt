@@ -117,7 +117,7 @@ class SrtSource: public virtual Source, public virtual SrtCommon
     std::string hostport_copy;
 public:
 
-    SrtSource(std::string host, int port, const std::map<std::string,std::string>& par);
+    SrtSource(std::string host, int port, std::string path, const std::map<std::string,std::string>& par);
     SrtSource()
     {
         // Do nothing - create just to prepare for use
@@ -146,7 +146,7 @@ class SrtTarget: public virtual Target, public virtual SrtCommon
 {
 public:
 
-    SrtTarget(std::string host, int port, const std::map<std::string,std::string>& par);
+    SrtTarget(std::string host, int port, std::string path, const std::map<std::string,std::string>& par);
     SrtTarget() {}
 
     int ConfigurePre(SRTSOCKET sock) override;
@@ -169,7 +169,7 @@ public:
 class SrtRelay: public Relay, public SrtSource, public SrtTarget
 {
 public:
-    SrtRelay(std::string host, int port, const std::map<std::string,std::string>& par);
+    SrtRelay(std::string host, int port, std::string path, const std::map<std::string,std::string>& par);
     SrtRelay() {}
 
     int ConfigurePre(SRTSOCKET sock) override

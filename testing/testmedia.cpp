@@ -173,7 +173,7 @@ void PrintSrtStats(int sid, const PerfMonType& mon)
 }
 
 
-void SrtCommon::InitParameters(string host, map<string,string> par)
+void SrtCommon::InitParameters(string host, string path, map<string,string> par)
 {
     // Application-specific options: mode, blocking, timeout, adapter
     if ( Verbose::on )
@@ -417,7 +417,7 @@ void SrtCommon::AcceptNewClient()
 void SrtCommon::Init(string host, int port, string path, map<string,string> par, SRT_EPOLL_OPT dir)
 {
     m_direction = dir;
-    InitParameters(host, par);
+    InitParameters(host, path, par);
 
     Verb() << "Opening SRT " << DirectionName(dir) << " " << m_mode
         << "(" << (m_blocking_mode ? "" : "non-") << "blocking)"
@@ -652,31 +652,21 @@ void SrtCommon::OpenGroupClient()
 
     bool any_node = false;
 
-    if (transmit_verbose)
-    {
-        cout << "REDUNDANT connections with " << m_group_nodes.size() << " nodes:\n";
-    }
+    Verb() << "REDUNDANT connections with " << m_group_nodes.size() << " nodes:";
 
     int i = 1;
     for (Connection& c: m_group_nodes)
     {
         sockaddr_in sa = CreateAddrInet(c.host, c.port);
         sockaddr* psa = (sockaddr*)&sa;
-        if ( transmit_verbose )
-        {
-            cout << "[" << i << "] Connecting to node " << c.host << ":" << c.port << " ... ";
-            cout.flush();
-        }
+        Verb() << "[" << i << "] Connecting to node " << c.host << ":" << c.port << " ... " << VerbNoEOL;
         ++i;
 
         int insock = srt_connect(m_sock, psa, sizeof sa);
         if (insock == SRT_ERROR)
         {
             // Whatever. Skip the node.
-            if (transmit_verbose)
-            {
-                cout << "FAILED: \n";
-            }
+            Verb() << "FAILED: ";
         }
         else
         {
@@ -699,8 +689,7 @@ void SrtCommon::OpenGroupClient()
     // Wait for REAL connected state if nonblocking mode, for AT LEAST one node.
     if ( !m_blocking_mode )
     {
-        if ( transmit_verbose )
-            cout << "[ASYNC] " << flush;
+        Verb() << "[ASYNC] " << VerbNoEOL;
 
         // SPIN-WAITING version. Don't use it unless you know what you're doing.
         // SpinWaitAsync();
@@ -710,10 +699,7 @@ void SrtCommon::OpenGroupClient()
         SRTSOCKET ready[2];
         if ( srt_epoll_wait(srt_conn_epoll, 0, 0, ready, &len, -1, 0, 0, 0, 0) != -1 )
         {
-            if ( transmit_verbose )
-            {
-                cout << "[EPOLL: " << len << " sockets] " << flush;
-            }
+            Verb() << "[EPOLL: " << len << " sockets] " << VerbNoEOL;
         }
         else
         {
@@ -811,6 +797,13 @@ void SrtCommon::Error(UDT::ERRORINFO& udtError, string src)
     throw TransmissionError("error: " + src + ": " + message);
 }
 
+void SrtCommon::Error(string msg)
+{
+    cerr << "\nERROR (app): " << msg << endl;
+    throw std::runtime_error(msg);
+}
+
+
 void SrtCommon::SetupRendezvous(string adapter, int port)
 {
     bool yes = true;
@@ -891,21 +884,14 @@ void SrtCommon::UpdateGroupStatus(const SRT_SOCKGROUPDATA* grpdata, size_t grpda
 
         sockaddr_in sa = CreateAddrInet(pgi->host, pgi->port);
         sockaddr* psa = (sockaddr*)&sa;
-        if ( transmit_verbose )
-        {
-            cout << "[" << i << "] RECONNECTING to node " << pgi->host << ":" << pgi->port << " ... ";
-            cout.flush();
-        }
+        Verb() << "[" << i << "] RECONNECTING to node " << pgi->host << ":" << pgi->port << " ... " << VerbNoEOL;
         ++i;
 
         int insock = srt_connect(m_sock, psa, sizeof sa);
         if (insock == SRT_ERROR)
         {
             // Whatever. Skip the node.
-            if (transmit_verbose)
-            {
-                cout << "FAILED: \n";
-            }
+            Verb() << "FAILED: ";
         }
         else
         {
@@ -1067,7 +1053,7 @@ void SrtTarget::Write(const bytevector& data)
 
 SrtRelay::SrtRelay(std::string host, int port, std::string path, const std::map<std::string,std::string>& par)
 {
-    Init(host, port, par, path, SRT_EPOLL_IN | SRT_EPOLL_OUT);
+    Init(host, port, path, par, SRT_EPOLL_IN | SRT_EPOLL_OUT);
 }
 
 SrtModel::SrtModel(string host, int port, map<string,string> par)
@@ -1162,7 +1148,8 @@ template <> struct Srt<Target> { typedef SrtTarget type; };
 template <> struct Srt<Relay> { typedef SrtRelay type; };
 
 template <class Iface>
-Iface* CreateSrt(const string& host, int port, const map<string,string>& par) { return new typename Srt<Iface>::type (host, port, par); }
+Iface* CreateSrt(const string& host, int port, std::string path, const map<string,string>& par)
+{ return new typename Srt<Iface>::type (host, port, path, par); }
 
 bytevector ConsoleRead(size_t chunk)
 {

@@ -213,6 +213,10 @@ foreach (gnid GNU Intel Clang AppleClang)
 	endif()
 endforeach()
 
+# External libraries: atomic
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/submodules/atomic/include)
+
+
 if (DISABLE_CXX11)
 	set (ENABLE_CXX11 0)
 elseif( DEFINED ENABLE_CXX11 )
@@ -329,6 +333,9 @@ if (ENABLE_THREAD_CHECK)
                -DFUGU_PLATFORM=1
                -I${WITH_THREAD_CHECK_INCLUDEDIR}
         )
+endif()
+if (ENABLE_DEBUG)
+    list(APPEND SRT_EXTRA_CFLAGS "-DENABLE_DEBUG=1")
 endif()
 
 if (${ENABLE_PROFILE} AND HAVE_COMPILER_GNU_COMPAT)
