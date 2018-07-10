@@ -567,7 +567,7 @@ void* CSndQueue::worker(void* param)
 #endif      /* SRT_DEBUG_SNDQ_HIGHRATE */
             }
 
-#if ENABLE_LOGGING
+#if ENABLE_HEAVY_LOGGING
             if ( pkt.isControl() )
             {
                 HLOGC(mglog.Debug, log << self->CONID() << "chn:SENDING: " << MessageTypeStr(pkt.getType(), pkt.getExtendedType()));
@@ -1169,7 +1169,7 @@ void* CRcvQueue::worker(void* param)
    return NULL;
 }
 
-#if ENABLE_LOGGING
+#if ENABLE_HEAVY_LOGGING
 static string PacketInfo(const CPacket& pkt)
 {
     ostringstream os;
@@ -1190,6 +1190,8 @@ static string PacketInfo(const CPacket& pkt)
 
     return os.str();
 }
+#else
+static string PacketInfo(const CPacket&) { return string(); }
 #endif
 
 EReadStatus CRcvQueue::worker_RetrieveUnit(ref_t<int32_t> r_id, ref_t<CUnit*> r_unit, ref_t<sockaddr_any> r_addr)
@@ -1221,6 +1223,7 @@ EReadStatus CRcvQueue::worker_RetrieveUnit(ref_t<int32_t> r_id, ref_t<CUnit*> r_
         EReadStatus rst = m_pChannel->recvfrom(r_addr, temp);
         THREAD_RESUMED();
 #if ENABLE_LOGGING
+        // Note: this will print nothing about the packet details unless heavy logging is on.
         LOGC(mglog.Error, log << CONID() << "LOCAL STORAGE DEPLETED. Dropping 1 packet: " << PacketInfo(temp));
 #endif
         delete [] temp.m_pcData;

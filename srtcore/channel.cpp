@@ -344,7 +344,7 @@ void CChannel::getPeerAddr(ref_t<sockaddr_any> addr) const
 
 int CChannel::sendto(const sockaddr_any& addr, CPacket& packet) const
 {
-#if ENABLE_LOGGING
+#if ENABLE_HEAVY_LOGGING
     std::ostringstream spec;
 
     if (packet.isControl())

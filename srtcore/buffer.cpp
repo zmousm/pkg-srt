@@ -716,7 +716,7 @@ void CSndBuffer::increase()
 
 CRcvBuffer* CRcvBuffer::create(int size, int32_t last_skip_ack, bool live)
 {
-    LOGC(mglog.Debug, log << "creating CRcvBuffer size=" << size
+    HLOGC(mglog.Debug, log << "creating CRcvBuffer size=" << size
         << " tail-seq=" << last_skip_ack
         << " internal-ack=" << (live ? "IMMEDIATE" : "DEFERRED"));
 
@@ -849,11 +849,11 @@ int CRcvBuffer::addDataAt(int32_t sequence, CUnit* unit)
     // buffer range. This can go that far below 0 as for the head_sequence.
     int min_offset = -CSeqNo::seqoff(head_sequence, m_ReadTailSequence);
 
-    LOGC(dlog.Debug, log << "addDataAt: seq=" << sequence << " into RNG[" << head_sequence << "-" << m_ReadTailSequence << "..." << (m_ReadTailSequence + m_iPastTailDelta) << "]");
+    HLOGC(dlog.Debug, log << "addDataAt: seq=" << sequence << " into RNG[" << head_sequence << "-" << m_ReadTailSequence << "..." << (m_ReadTailSequence + m_iPastTailDelta) << "]");
 
     if (offset < min_offset)
     {
-        LOGC(dlog.Debug, log << "Sequence number " << sequence << " is in the past (last ack: " << m_ReadTailSequence << ") - discarding");
+        HLOGC(dlog.Debug, log << "Sequence number " << sequence << " is in the past (last ack: " << m_ReadTailSequence << ") - discarding");
         return -1;
     }
 
@@ -873,7 +873,7 @@ int CRcvBuffer::addDataAt(int32_t sequence, CUnit* unit)
     }
 
     int result = addData(unit, offset);
-    LOGC(dlog.Debug, log << "addDataAt: UPDATED: RNG[" << head_sequence << "-" << m_ReadTailSequence << "..." << (m_ReadTailSequence + m_iPastTailDelta) << "] result:" << result);
+    HLOGC(dlog.Debug, log << "addDataAt: UPDATED: RNG[" << head_sequence << "-" << m_ReadTailSequence << "..." << (m_ReadTailSequence + m_iPastTailDelta) << "] result:" << result);
     return result;
 }
 
@@ -898,7 +898,7 @@ int CRcvBuffer::addData(CUnit* unit, int offset)
     int pos = shift(m_iReadTail, offset);
     if (m_aUnits[pos] != NULL)
     {
-        LOGP(dlog.Debug, "addData: there is a packet already at that position");
+        HLOGP(dlog.Debug, "addData: there is a packet already at that position");
 #if ENABLE_LOGGING
         // Make a sanity check here. The condition to check if the offset exceeds
         // m_iPastTailDelta was before this condition earlier, however if it
@@ -971,7 +971,7 @@ int CRcvBuffer::addData(CUnit* unit, int offset)
     }
     else
     {
-        LOGC(dlog.Debug, log << "addData: NOT acknowledging packets internally - will be done when sending UMSG_ACK");
+        HLOGC(dlog.Debug, log << "addData: NOT acknowledging packets internally - will be done when sending UMSG_ACK");
     }
 
     return new_head_status;
@@ -1008,11 +1008,11 @@ void CRcvBuffer::ackContiguous()
         }
     }
 
-#if ENABLE_LOGGING
+#if ENABLE_HEAVY_LOGGING
     int base = CSeqNo::incseq(m_ReadTailSequence, 1);
     int end = CSeqNo::incseq(m_ReadTailSequence, ack_delta);
 
-    LOGC(mglog.Debug, log << "ackContiguous: to be clipped: from=" << base << " to=" << end);
+    HLOGC(mglog.Debug, log << "ackContiguous: to be clipped: from=" << base << " to=" << end);
 #endif
 
     // If the loop didn't catch any empty cell, then at exit d == m_iPastTailDelta.
@@ -1131,7 +1131,7 @@ bool CRcvBuffer::ackDataTo(int32_t upseq)
     int acksize = CSeqNo::seqoff(m_ReadTailSequence, upseq);
     if (acksize > 0)
     {
-        LOGC(dlog.Debug, log << "ackDataTo: ACKing seq: " << m_ReadTailSequence
+        HLOGC(dlog.Debug, log << "ackDataTo: ACKing seq: " << m_ReadTailSequence
             << " - " << upseq << " (" << acksize << " packets)");
         ackData(acksize);
         updated = true;
@@ -1228,7 +1228,7 @@ void CRcvBuffer::skipData(int len)
     }
 }
 
-#if ENABLE_LOGGING
+#if ENABLE_HEAVY_LOGGING
 inline bool whichcond(bool cond, std::string& variable, std::string value)
 {
     if (cond)
@@ -1294,7 +1294,7 @@ bool CRcvBuffer::getFirstAvailMsg(ref_t<uint64_t> r_playtime, ref_t<int32_t> r_p
 
         // Don't send misleading "skipping" log
         if (m_iReadHead != starting_head)
-            LOGC(dlog.Debug, log << "getFirstAvailMsg: ... skipped bad cells up to seq=" << m_aUnits[m_iReadHead]->ref_packet().getSeqNo());
+            HLOGC(dlog.Debug, log << "getFirstAvailMsg: ... skipped bad cells up to seq=" << m_aUnits[m_iReadHead]->ref_packet().getSeqNo());
 #endif
         break;
     }
@@ -1405,7 +1405,7 @@ bool CRcvBuffer::getFirstAvailMsg(ref_t<uint64_t> r_playtime, ref_t<int32_t> r_p
         if (dist < 0)
             dist += m_iSize;
         int32_t old_seq = CSeqNo::decseq(m_ReadTailSequence, dist);
-        LOGC(dlog.Debug, log << "(shifted in the meantime: old=" << old_seq << " new=" << m_ReadTailSequence << ")");
+        HLOGC(dlog.Debug, log << "(shifted in the meantime: old=" << old_seq << " new=" << m_ReadTailSequence << ")");
 #endif
     }
 
@@ -1464,7 +1464,7 @@ bool CRcvBuffer::getFirstAvailMsg(ref_t<uint64_t> r_playtime, ref_t<int32_t> r_p
     // Reached the end and nothing found. Or not even started looping here.
 
     // (don't specify whether you don't have EUR, USD or CAD, simply say "dire straits")
-    LOGC(mglog.Debug, log << "getFirstAvailMsg: no packets in the receiving buffer AT ALL.");
+    HLOGC(mglog.Debug, log << "getFirstAvailMsg: no packets in the receiving buffer AT ALL.");
     return false;
 }
 
@@ -1634,7 +1634,7 @@ bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<int32_t> r_cu
         // not be possible to happen.
         if (m_aUnits[i] == NULL)
         {
-#if ENABLE_LOGGING
+#if ENABLE_HEAVY_LOGGING
             int head_seq = CSeqNo::decseq(m_ReadTailSequence, getRcvDataSize());
             LOGC(mglog.Error, log << "rcv buffer: IPE: non-contiguous cell found at seq=" << head_seq << " - skipping this sequence");
 #endif
@@ -1644,7 +1644,7 @@ bool CRcvBuffer::getRcvReadyMsg(ref_t<uint64_t> r_tsbpdtime, ref_t<int32_t> r_cu
 
         if (m_aUnits[i]->status() != CUnit::GOOD || m_aUnits[i]->ref_packet().getMsgCryptoFlags() != EK_NOENC)
         {
-#if ENABLE_LOGGING
+#if ENABLE_HEAVY_LOGGING
             int head_seq = CSeqNo::decseq(m_ReadTailSequence, getRcvDataSize());
             LOGC(mglog.Error, log << "rcv buffer: IPE: WRONG STATUS for cell found at seq=" << head_seq << " - skipping this sequence");
 #endif

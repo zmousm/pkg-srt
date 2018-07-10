@@ -2903,7 +2903,7 @@ CRcvBuffer* CUDTGroup::acquireReceiveBuffer(int buffer_size, int32_t iseq, bool 
     return m_pRcvBuffer;
 }
 
-#if ENABLE_LOGGING
+#if ENABLE_HEAVY_LOGGING
 void CUDTGroup::debugGroup()
 {
     CGuard gg(m_GroupLock);
@@ -7755,8 +7755,8 @@ void CUDT::updateAfterSrtHandshake()
     //
     // This function will be called only ONCE in this
     // instance, through either HSREQ or HSRSP.
-#if ENABLE_LOGGING
-    const char* hs_side[] = { "DRAW", "INITIATOR", "RESPONDE" };
+#if ENABLE_HEAVY_LOGGING
+    const char* hs_side[] = { "DRAW", "INITIATOR", "RESPONDER" };
     HLOGC(mglog.Debug, log << "updateAfterSrtHandshake: version="
             << m_ConnRes.m_iVersion << " side=" << hs_side[m_SrtHsSide]
             << " group=%"
@@ -10487,7 +10487,7 @@ int CUDTGroup::recv(char* buf, int len, ref_t<SRT_MSGCTRL> r_mc)
                 }
             } while (m_pRcvBuffer && !timeout && (!m_pRcvBuffer->isRcvDataReady()));
 
-#if ENABLE_LOGGING
+#if ENABLE_HEAVY_LOGGING
             bool data_ready = m_pRcvBuffer && m_pRcvBuffer->isRcvDataReady();
 
             HLOGC(tslog.Debug, log << "CUDTGroup::recv lock-waiting loop exited: stillConntected=" << m_pRcvBuffer
@@ -10578,7 +10578,7 @@ void SRT_tsbpdLoop(
 #endif
 
         bool rxready = self->rcvBuffer()->getFirstAvailMsg(Ref(tsbpdtime), Ref(pkt_seq), Ref(need_skipped));
-#if ENABLE_LOGGING
+#if ENABLE_HEAVY_LOGGING
 
         if (tsbpdtime == 0)
         {
@@ -10598,7 +10598,7 @@ void SRT_tsbpdLoop(
             // is ready to play. Forget the lost packets.
             self->forgetPacketsUpTo(pkt_seq);
         }
-#if ENABLE_LOGGING
+#if ENABLE_HEAVY_LOGGING
         string sleep_reason = "NO DATA";
 #endif
 
@@ -10628,7 +10628,7 @@ void SRT_tsbpdLoop(
             // which may be the packet coming in, or the reading function confirming that
             // it has read the signed-off packet.
             tsbpdtime = 0;
-#if ENABLE_LOGGING
+#if ENABLE_HEAVY_LOGGING
             sleep_reason = "SIGNED OFF";
 #endif
         }
@@ -10639,7 +10639,7 @@ void SRT_tsbpdLoop(
         {
             // Go to sleep until the time comes.
             // Note that this still may wake it up in case of a new packet arrived.
-#if ENABLE_LOGGING
+#if ENABLE_HEAVY_LOGGING
             uint64_t timediff = tsbpdtime - CTimer::getTime();
             HLOGC(tslog.Debug, log << self->CONID() << "tsbpd: FUTURE PACKET seq=" << pkt_seq
                     << " PTS=" << logging::FormatTime(tsbpdtime) << " - waiting " << setprecision(6) << (timediff/1000.0) << "ms");

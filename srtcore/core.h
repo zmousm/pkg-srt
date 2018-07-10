@@ -293,7 +293,7 @@ public:
     void removeEPoll(int eid);
 
 
-#if ENABLE_LOGGING
+#if ENABLE_HEAVY_LOGGING
     void debugGroup();
 #else
     void debugGroup() {}
