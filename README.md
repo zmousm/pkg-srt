@@ -26,10 +26,13 @@ As audio/video packets are streamed from a source to a destination device, SRT d
 * [Why SRT Was Created](docs/why-srt-was-created.md)
 * [Using the `stransmit` App](docs/stransmit.md)
 * [SRT Encryption](docs/encryption.md)
+* [API](docs/API.md)
+* [Reporting problems](docs/reporting.md)
 
 # Requirements
 
 * cmake (as build system)
+* Tcl 8.5 (optional for user-friendly build system)
 * OpenSSL
 * Pthreads (for POSIX systems it's builtin, for Windows there's a library)
 
@@ -65,6 +68,21 @@ make
 
 ## For Mac (Darwin, iOS):
 
+[Homebrew](https://brew.sh/) supports "srt" formula.
+
+```
+brew update
+brew install srt
+```
+
+If you prefer using a head commit of `master` branch, you should add `--HEAD` option
+to `brew` command.
+
+```
+brew install --HEAD srt
+```
+
+Also, SRT can be built with `cmake` and `make` on Mac.
 Install cmake and openssl with development files from "brew". Note that the
 system version of OpenSSL is inappropriate, although you should be able to
 use any newer version compiled from sources, if you prefer.

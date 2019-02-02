@@ -1,21 +1,12 @@
-/*****************************************************************************
+/*
  * SRT - Secure, Reliable, Transport
- * Copyright (c) 2017 Haivision Systems Inc.
+ * Copyright (c) 2018 Haivision Systems Inc.
  * 
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  * 
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- * 
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; If not, see <http://www.gnu.org/licenses/>
- * 
- *****************************************************************************/
+ */
 
 /*****************************************************************************
 written by
@@ -50,14 +41,12 @@ public:
 
 
     ThreadName(const char* name)
-        : good(false)
     {
-        if ( get(old_name) )
+        if ( (good = get(old_name)) )
         {
             snprintf(new_name, 127, "%s", name);
             new_name[127] = 0;
             prctl(PR_SET_NAME, (unsigned long)new_name, 0, 0);
-            good = true;
         }
     }
 
@@ -80,6 +69,7 @@ class ThreadName
 public:
 
     static bool get(char*) { return false; }
+    static bool set(const char*) { return false; }
 
     ThreadName(const char*)
     {
@@ -88,6 +78,7 @@ public:
     ~ThreadName() // just to make it "non-trivially-destructible" for compatibility with normal version
     {
     }
+
 };
 
 

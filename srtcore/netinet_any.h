@@ -1,21 +1,12 @@
-/*****************************************************************************
+/*
  * SRT - Secure, Reliable, Transport
- * Copyright (c) 2017 Haivision Systems Inc.
+ * Copyright (c) 2018 Haivision Systems Inc.
  * 
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  * 
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- * 
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; If not, see <http://www.gnu.org/licenses/>
- * 
- *****************************************************************************/
+ */
 
 /*****************************************************************************
 written by
@@ -28,8 +19,11 @@ written by
 #include <cstring>
 #include "platform_sys.h"
 
-// This is a smart structure that this moron who has designed BSD sockets
-// should have defined in the first place.
+// This structure should replace every use of sockaddr and its currently
+// used specializations, sockaddr_in and sockaddr_in6. This is to simplify
+// the use of the original BSD API that relies on type-violating type casts.
+// You can use the instances of sockaddr_any in every place where sockaddr is
+// required.
 
 struct sockaddr_any
 {
@@ -52,8 +46,8 @@ struct sockaddr_any
     {
         switch (sa.sa_family)
         {
-        case AF_INET: return static_cast<socklen_t>(sizeof sin);
-        case AF_INET6: return static_cast<socklen_t>(sizeof sin6);
+        case AF_INET: return socklen_t(sizeof sin);
+        case AF_INET6: return socklen_t(sizeof sin6);
 
         default: return 0; // fallback, impossible
         }
@@ -76,7 +70,11 @@ struct sockaddr_any
         sin.sin_port = htons(value);
     }
 
+    sockaddr* get() { return &sa; }
     sockaddr* operator&() { return &sa; }
+
+    const sockaddr* get() const { return &sa; }
+    const sockaddr* operator&() const { return &sa; }
 
     template <int> struct TypeMap;
 
@@ -122,7 +120,6 @@ struct sockaddr_any
             return memcmp(&c1, &c2, sizeof(c1)) < 0;
         }
     };
-    
 };
 
 template<> struct sockaddr_any::TypeMap<AF_INET> { typedef sockaddr_in type; };

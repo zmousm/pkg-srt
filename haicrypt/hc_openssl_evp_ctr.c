@@ -1,19 +1,11 @@
 /*
  * SRT - Secure, Reliable, Transport
- * Copyright (c) 2017 Haivision Systems Inc.
+ * Copyright (c) 2018 Haivision Systems Inc.
  * 
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  * 
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- * 
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; If not, see <http://www.gnu.org/licenses/>
  */
 
 
@@ -226,7 +218,7 @@ static int hcOpenSSL_EVP_CTR_SetKey(hcrypt_CipherData *cipher_data, hcrypt_Ctx *
 		break;
 #endif /* HAICRYPT_USE_OPENSSL_EVP_ECB4CTR */
 	default:
-		HCRYPT_LOG(LOG_ERR, "%s", "invalid key length\n");
+		HCRYPT_LOG(LOG_ERR, "invalid key length (%d). Expected: 16, 24, 32\n", (int)key_len);
 		return(-1);
 	}
 
@@ -235,7 +227,7 @@ static int hcOpenSSL_EVP_CTR_SetKey(hcrypt_CipherData *cipher_data, hcrypt_Ctx *
 }
 
 static int hcOpenSSL_EVP_CTR_Crypt(hcrypt_CipherData *cipher_data, hcrypt_Ctx *ctx,
-	hcrypt_DataDesc *in_data, int nbin, void *out_p[], size_t out_len_p[], int *nbout_p)
+	hcrypt_DataDesc *in_data, int nbin ATR_UNUSED, void *out_p[], size_t out_len_p[], int *nbout_p)
 {
 	hcOpenSSL_EVP_CTR_data *evp_data = (hcOpenSSL_EVP_CTR_data *)cipher_data;
 	unsigned char iv[HCRYPT_EVP_CTR_BLK_SZ];

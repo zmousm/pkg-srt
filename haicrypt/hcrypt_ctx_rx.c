@@ -1,19 +1,11 @@
 /*
  * SRT - Secure, Reliable, Transport
- * Copyright (c) 2017 Haivision Systems Inc.
+ * Copyright (c) 2018 Haivision Systems Inc.
  * 
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  * 
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- * 
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; If not, see <http://www.gnu.org/licenses/>
  */
 
 
@@ -30,17 +22,18 @@ written by
 #include <string.h>				/* memcpy */
 #include "hcrypt.h"
 
-int hcryptCtx_Rx_Init(hcrypt_Session *crypto, hcrypt_Ctx *ctx, HaiCrypt_Cfg *cfg)
+int hcryptCtx_Rx_Init(hcrypt_Session *crypto, hcrypt_Ctx *ctx, const HaiCrypt_Cfg *cfg)
 {
-	ctx->mode = HCRYPT_CTX_MODE_AESCTR;
-	ctx->status = HCRYPT_CTX_S_INIT;
+    ctx->mode = HCRYPT_CTX_MODE_AESCTR;
+    ctx->status = HCRYPT_CTX_S_INIT;
 
-	ctx->msg_info = crypto->msg_info;
+    ctx->msg_info = crypto->msg_info;
 
-	if (hcryptCtx_SetSecret(crypto, ctx, &cfg->secret)) {
-		return(-1);
-	}
-	return(0);
+    if (cfg && hcryptCtx_SetSecret(crypto, ctx, &cfg->secret)) {
+        return(-1);
+    }
+    ctx->status = HCRYPT_CTX_S_SARDY;
+    return(0);
 }
 
 int hcryptCtx_Rx_Rekey(hcrypt_Session *crypto, hcrypt_Ctx *ctx, unsigned char *sek, size_t sek_len)
@@ -69,7 +62,7 @@ int hcryptCtx_Rx_ParseKM(hcrypt_Session *crypto, unsigned char *km_msg, size_t m
 	int do_pbkdf = 0;
 
 	if (NULL == crypto) {
-		HCRYPT_LOG(LOG_INFO, "%s", "Invalid params\n");
+		HCRYPT_LOG(LOG_ERR, "Rx_ParseKM: invalid params: crypto=%p\n", crypto);
 		return(-1);
 	}
 
@@ -170,7 +163,6 @@ int hcryptCtx_Rx_ParseKM(hcrypt_Session *crypto, unsigned char *km_msg, size_t m
 		HCRYPT_LOG(LOG_WARNING, "%s", "unwrap key failed\n");
 		return(-2); //Report unmatched shared secret
 	}
-
 	/*
 	 * First SEK in KMmsg is eSEK if both SEK present
 	 */
