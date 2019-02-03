@@ -2,7 +2,7 @@ diff --git a/CMakeLists.txt b/CMakeLists.txt
 index daec198..644a308 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -692,30 +692,21 @@ if ( ENABLE_CXX11 )
+@@ -693,30 +693,21 @@ if ( ENABLE_CXX11 )
  	srt_add_application(srt-live-transmit ${VIRTUAL_srtsupport})
  
  	# For backward compatibility with the old name

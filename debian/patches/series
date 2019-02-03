@@ -1,2 +1,2 @@
-00_cmake_multiarch
-99_cmake_symlink_target
+001-multiarch-rpath.patch
+099-cmake-symlink-target.patch

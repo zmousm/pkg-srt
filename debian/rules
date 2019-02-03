@@ -1,11 +1,34 @@
 #!/usr/bin/make -f
+export DH_VERBOSE = 1
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export DEB_CFLAGS_MAINT_APPEND  = -Wall -pedantic
+export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed
+
+include /usr/share/dpkg/default.mk  # provides DEB_VERSION
 
 %:
-	dh $@
+	dh $@ --with sphinxdoc
 
-override_dh_clean:
+override_dh_auto_clean:
 	dh_clean
-	rm -f CMakeCache.txt Makefile cmake_install.cmake haisrt.pc install_manifest.txt srt.pc
-	rm -f libsrt.so.1.3.1 stransmit utility-test libsrt.so.1 libsrt.so version.h
-	rm -rf CMakeFiles
+	rm -rf CMakeFiles/ debian/html
 
+override_dh_auto_build:
+	dh_auto_build
+	http_proxy='http://127.0.0.1:9/' sphinx-build -N -c debian -bhtml docs debian/html
+
+# override_dh_auto_install:
+# 	dh_auto_install
+# 	cp debian/tmp/usr/bin/srt-live-transmit debian/tmp/usr/bin/stransmit
+
+override_dh_installman:
+	help2man --no-discard-stderr --no-info --version-string="$(DEB_VERSION)" \
+	--name "" \
+	-o ./debian/srt-file-transmit.1 ./debian/srt-tools/usr/bin/srt-file-transmit
+	help2man --no-discard-stderr --no-info --version-string="$(DEB_VERSION)" \
+	--name "" \
+	-o ./debian/srt-live-transmit.1 ./debian/srt-tools/usr/bin/srt-live-transmit
+	help2man --no-discard-stderr --no-info --version-string="$(DEB_VERSION)" \
+	--name "" \
+	-o ./debian/srt-multiplex.1 ./debian/srt-tools/usr/bin/srt-multiplex
+	dh_installman
