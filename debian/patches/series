@@ -1,1 +1,2 @@
 00_cmake_multiarch
+99_cmake_symlink_target
