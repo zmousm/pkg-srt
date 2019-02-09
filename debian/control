@@ -53,6 +53,8 @@ Architecture: any
 Section: utils
 Multi-Arch: foreign
 Depends: libsrt1 (= ${binary:Version}), ${shlibs:Depends}, ${misc:Depends}
+Replaces: srt-bin (<< 1.3.1-1)
+Breaks: srt-bin (<< 1.3.1-1)
 Description: Secure Reliable Transport UDP streaming library
  SRT is a latency-aware UDP transport mechanism optimized for video streams.
  It detects and compensates for jitter and bandwidth fluctuations due to
