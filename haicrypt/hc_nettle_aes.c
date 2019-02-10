@@ -1,21 +1,17 @@
 /*
  * SRT - Secure, Reliable, Transport
- * Copyright (c) 2017 Haivision Systems Inc.
- *     Author: Justin Kim <justin.kim@collabora.com>
+ * Copyright (c) 2018 Haivision Systems Inc.
  * 
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  * 
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- * 
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; If not, see <http://www.gnu.org/licenses/>
  */
+
+/*
+ * Author(s):
+ *     Justin Kim <justin.kim@collabora.com>
+ */ 
 
 #include "hcrypt.h"
 
@@ -232,7 +228,7 @@ hcNettle_AES_Encrypt (hcrypt_CipherData * cipher_data,
 
         /* Encrypt packet payload in output message buffer */
         ctr_crypt (aes_key,        /* ctx */
-                   aes_encrypt, /* nettle_cipher_func */
+                   (nettle_crypt_func*)aes_encrypt, /* nettle_cipher_func */
                    AES_BLOCK_SIZE, /* cipher blocksize */
                    iv,             /* iv */
                    in_data[0].len, /* length */
@@ -375,7 +371,7 @@ hcNettle_AES_Decrypt (hcrypt_CipherData * cipher_data, hcrypt_Ctx * ctx,
 
         /* Decrypt message (same as encrypt for CTR mode) */
         ctr_crypt (aes_key,        /* ctx */
-                   aes_encrypt, /* nettle_cipher_func */
+                   (nettle_crypt_func*)aes_encrypt, /* nettle_cipher_func */
                    AES_BLOCK_SIZE, /* cipher blocksize */
                    iv,             /* iv */
                    in_data[0].len, /* length */

@@ -1,7 +1,4 @@
-version=4
+version=3
 
-# GitHub hosted projects
-opts="filenamemangle=s%(?:.*?)?v?(\d[\d.]*)\.tar\.gz%<project>-$1.tar.gz%" \
-   https://github.com/haivision/srt/tags \
-   (?:.*?/)?v?(\d[\d.]*)\.tar\.gz debian uupdate
-
+opts=filenamemangle=s/.+\/v?(\d\S*)\.tar\.gz/srt-$1\.tar\.gz/ \
+  https://github.com/Haivision/srt/tags .*/v?(\d\S*)\.tar\.gz

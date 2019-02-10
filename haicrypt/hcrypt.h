@@ -1,19 +1,11 @@
 /*
  * SRT - Secure, Reliable, Transport
- * Copyright (c) 2017 Haivision Systems Inc.
+ * Copyright (c) 2018 Haivision Systems Inc.
  * 
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  * 
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- * 
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; If not, see <http://www.gnu.org/licenses/>
  */
 
 /*****************************************************************************
@@ -48,6 +40,12 @@ written by
    #include <sys/time.h>
 #endif
 
+#ifdef __GNUC__
+#define ATR_UNUSED __attribute__((unused))
+#else
+#define ATR_UNUSED
+#endif
+
 #include "haicrypt.h"
 #include "hcrypt_msg.h"
 
@@ -67,7 +65,7 @@ written by
 #include "crypto_api.h"
 #endif /* HAICRYPT_SUPPORT_CRYPTO_API */
 
-typedef struct {
+typedef struct hcrypt_Session_str {
 #ifdef HAICRYPT_SUPPORT_CRYPTO_API
         /* 
          * Resv matches internal upper layer handle (crypto_api)
@@ -92,6 +90,10 @@ typedef struct {
         hcrypt_MsgInfo *    msg_info;
 
         struct {
+            size_t          data_max_len;
+        }cfg;
+
+        struct {
             struct timeval  tx_period;      /* Keying Material tx period (milliseconds) */  
             struct timeval  tx_last;        /* Keying Material last tx time */
             unsigned int    refresh_rate;   /* SEK use period */
@@ -99,10 +101,15 @@ typedef struct {
         }km;
 } hcrypt_Session;
 
+#if ENABLE_HAICRYPT_LOGGING
+#include "haicrypt_log.h"
+#else
 
 #define HCRYPT_LOG_INIT()
 #define HCRYPT_LOG_EXIT()
 #define HCRYPT_LOG(lvl, fmt, ...)
+
+#endif
 
 #ifdef  HCRYPT_DEV
 #define HCRYPT_PRINTKEY(key, len, tag) HCRYPT_LOG(LOG_DEBUG, \
@@ -148,11 +155,12 @@ typedef struct {
         } while(0)
 
 
-int hcryptCtx_SetSecret(hcrypt_Session *crypto, hcrypt_Ctx *ctx, HaiCrypt_Secret *secret);
+int hcryptCtx_SetSecret(hcrypt_Session *crypto, hcrypt_Ctx *ctx, const HaiCrypt_Secret *secret);
 int hcryptCtx_GenSecret(hcrypt_Session *crypto, hcrypt_Ctx *ctx);
 
-int hcryptCtx_Tx_Init(hcrypt_Session *crypto, hcrypt_Ctx *ctx, HaiCrypt_Cfg *cfg);
+int hcryptCtx_Tx_Init(hcrypt_Session *crypto, hcrypt_Ctx *ctx, const HaiCrypt_Cfg *cfg);
 int hcryptCtx_Tx_Rekey(hcrypt_Session *crypto, hcrypt_Ctx *ctx);
+int hcryptCtx_Tx_CloneKey(hcrypt_Session *crypto, hcrypt_Ctx *ctx, const hcrypt_Session* cryptoSrc);
 int hcryptCtx_Tx_Refresh(hcrypt_Session *crypto);
 int hcryptCtx_Tx_PreSwitch(hcrypt_Session *crypto);
 int hcryptCtx_Tx_Switch(hcrypt_Session *crypto);
@@ -161,7 +169,7 @@ int hcryptCtx_Tx_AsmKM(hcrypt_Session *crypto, hcrypt_Ctx *ctx, unsigned char *a
 int hcryptCtx_Tx_ManageKM(hcrypt_Session *crypto);
 int hcryptCtx_Tx_InjectKM(hcrypt_Session *crypto, void *out_p[], size_t out_len_p[], int maxout);
 
-int hcryptCtx_Rx_Init(hcrypt_Session *crypto, hcrypt_Ctx *ctx, HaiCrypt_Cfg *cfg);
+int hcryptCtx_Rx_Init(hcrypt_Session *crypto, hcrypt_Ctx *ctx, const HaiCrypt_Cfg *cfg);
 int hcryptCtx_Rx_ParseKM(hcrypt_Session *crypto, unsigned char *msg, size_t msg_len);
 
 #endif /* HCRYPT_H */

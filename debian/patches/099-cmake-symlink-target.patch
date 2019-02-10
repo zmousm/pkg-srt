@@ -1,0 +1,60 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index daec198..644a308 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -693,30 +693,21 @@ if ( ENABLE_CXX11 )
+ 	srt_add_application(srt-live-transmit ${VIRTUAL_srtsupport})
+ 
+ 	# For backward compatibility with the old name
+-	if (SYMLINKABLE)
+-		set (REPLI_COMMAND create_symlink )
+-	else()
+-		set (REPLI_COMMAND copy)
+-	endif()
+-
+ 	set (stransmit_path $<TARGET_FILE_DIR:srt-live-transmit>/stransmit${CMAKE_EXECUTABLE_SUFFIX})
+-	add_custom_command(
+-		TARGET srt-live-transmit
+-		POST_BUILD
+-		COMMAND ${CMAKE_COMMAND} -E ${REPLI_COMMAND} $<TARGET_FILE:srt-live-transmit> ${stransmit_path})
+-
+ 	if (SYMLINKABLE)
++		add_custom_command(
++			TARGET srt-live-transmit
++			POST_BUILD
++			COMMAND ${CMAKE_COMMAND} -E create_symlink srt-live-transmit ${stransmit_path})
+ 		message(STATUS "BACKWARD COMPATIBLE 'stransmit': will use symbolic link")
+-		srt_install_symlink(srt-live-transmit ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/stransmit)
+-	elseif(${CMAKE_MAJOR_VERSION} LESS 3)
+-		message(FATAL_ERROR "Your system can't install symbolic link to 'stransmit', copy-on-install requires cmake at least 3.0.2")
+ 	else()
+-		# This installation doesn't work with cmake earlier than 3.0
+-		# (looxlike cmake 2.8 somehow doesn't have a problem with resolving the $<TARGET_FILE_DIR:...>
+-		# inside the generated makefile, but does have problem with its own generated cmake_install.cmake :D)
++		add_custom_command(
++			TARGET srt-live-transmit
++			POST_BUILD
++			COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:srt-live-transmit> ${stransmit_path})
+ 		message(STATUS "BACKWARD COMPATIBLE 'stransmit': will use copying")
+-		install(PROGRAMS ${stransmit_path} DESTINATION ${CMAKE_INSTALL_BINDIR})
+ 	endif()
++	install(PROGRAMS ${stransmit_path} DESTINATION ${CMAKE_INSTALL_BINDIR})
+ 
+ 	# srt-file-transmit must be temporarily blocked on Windows because it's not yet portable
+ 	if (NOT WIN32)
+diff --git a/scripts/haiUtil.cmake b/scripts/haiUtil.cmake
+index a16ce9d..3f5e4e6 100644
+--- a/scripts/haiUtil.cmake
++++ b/scripts/haiUtil.cmake
+@@ -48,11 +48,6 @@ FUNCTION(join_arguments outvar)
+ 	set (${outvar} ${output} PARENT_SCOPE)
+ ENDFUNCTION()
+ 
+-macro(srt_install_symlink filepath sympath)
+-    install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink ${filepath} ${sympath})")
+-    install(CODE "message(\"-- Created symlink: ${sympath} -> ${filepath}\")")
+-endmacro(srt_install_symlink)
+-
+ MACRO(MafRead maffile)
+ 	# ARGN contains the extra "section-variable" pairs
+ 	# If empty, return nothing

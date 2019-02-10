@@ -1,19 +1,11 @@
 /*
  * SRT - Secure, Reliable, Transport
- * Copyright (c) 2017 Haivision Systems Inc.
+ * Copyright (c) 2018 Haivision Systems Inc.
  * 
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  * 
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- * 
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; If not, see <http://www.gnu.org/licenses/>
  */
 
 /*****************************************************************************
@@ -117,11 +109,20 @@ typedef struct {
         unsigned int    km_pre_announce_pkt;    /* Keying Material Pre/Post Announce (pkts) */
 }HaiCrypt_Cfg;
 
-typedef void *HaiCrypt_Handle;
+typedef enum HaiCrypt_CryptoDir { HAICRYPT_CRYPTO_DIR_RX, HAICRYPT_CRYPTO_DIR_TX } HaiCrypt_CryptoDir;
+
+//typedef void *HaiCrypt_Handle;
+// internally it will be correctly interpreted,
+// for the outsider it's just some kinda incomplete type
+// but still if you use any kinda pointer instead, you'll get complaints
+typedef struct hcrypt_Session_str* HaiCrypt_Handle;
+
+
 
 HAICRYPT_API int  HaiCrypt_SetLogLevel(int level, int logfa);
 
-HAICRYPT_API int  HaiCrypt_Create(HaiCrypt_Cfg *cfg, HaiCrypt_Handle *phhc);
+HAICRYPT_API int  HaiCrypt_Create(const HaiCrypt_Cfg *cfg, HaiCrypt_Handle *phhc);
+HAICRYPT_API int  HaiCrypt_Clone(HaiCrypt_Handle hhcSrc, HaiCrypt_CryptoDir tx, HaiCrypt_Handle *phhc);
 HAICRYPT_API int  HaiCrypt_Close(HaiCrypt_Handle hhc);
 HAICRYPT_API int  HaiCrypt_Tx_GetBuf(HaiCrypt_Handle hhc, size_t data_len, unsigned char **in_p);
 HAICRYPT_API int  HaiCrypt_Tx_Process(HaiCrypt_Handle hhc, unsigned char *in, size_t in_len,
@@ -133,6 +134,13 @@ HAICRYPT_API int  HaiCrypt_Tx_GetKeyFlags(HaiCrypt_Handle hhc);
 HAICRYPT_API int  HaiCrypt_Tx_ManageKeys(HaiCrypt_Handle hhc, void *out_p[], size_t out_len_p[], int maxout);
 HAICRYPT_API int  HaiCrypt_Tx_Data(HaiCrypt_Handle hhc, unsigned char *pfx, unsigned char *data, size_t data_len);
 HAICRYPT_API int  HaiCrypt_Rx_Data(HaiCrypt_Handle hhc, unsigned char *pfx, unsigned char *data, size_t data_len);
+
+/* Status values */
+
+#define HAICRYPT_ERROR -1
+#define HAICRYPT_ERROR_WRONG_SECRET -2
+#define HAICRYPT_OK 0
+
 
 #ifdef __cplusplus
 }
