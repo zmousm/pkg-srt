@@ -1,5 +1,9 @@
 Description: Downgrade CMake version
  Downgrade required CMake version to fit wheezy-backports.
+ And don't use features not available in previous versions:
+  * use older signature for target_link_libraries()
+  * replace target_compile_options() with somewhat equivalent
+    set_target_properties(... PROPERTIES COMPILE_FLAGS)
 Author: Zenon Mousmoulas <zmousm@noc.grnet.gr>
 
 Index: srt/CMakeLists.txt
@@ -57,3 +61,30 @@ Index: srt/CMakeLists.txt
  endif()
  endif()
  
+@@ -639,7 +639,6 @@ macro(srt_add_program name)
+ endmacro()
+ 
+ macro(srt_make_application name)
+-	target_compile_options(${name} PRIVATE ${CFLAGS_CXX_STANDARD})
+ 
+ 	# This is recommended by cmake, but it doesn't work anyway.
+ 	# What is needed is that this below CMAKE_INSTALL_RPATH (yes, relative)
+@@ -685,7 +684,7 @@ if ( ENABLE_CXX11 )
+ 	# library should be changed into a static one and made useful
+ 	# for users.
+ 	add_library(srtsupport_virtual OBJECT ${SOURCES_support})
+-	target_compile_options(srtsupport_virtual PUBLIC ${CFLAGS_CXX_STANDARD})
++	set_target_properties(srtsupport_virtual PROPERTIES COMPILE_FLAGS "${CFLAGS_CXX_STANDARD}")
+ 	set (VIRTUAL_srtsupport $<TARGET_OBJECTS:srtsupport_virtual>)
+ 
+ 	# Applications
+@@ -743,8 +742,7 @@ if ( ENABLE_CXX11 )
+ 
+ 		srt_add_testprogram(utility-test)
+ 		srt_add_testprogram(uriparser-test)
+-		target_compile_options(uriparser-test PRIVATE -DTEST)
+-		target_compile_options(uriparser-test PRIVATE ${CFLAGS_CXX_STANDARD})
++		set_target_properties(uriparser-test PROPERTIES COMPILE_FLAGS "-DTEST" "${CFLAGS_CXX_STANDARD}")
+ 		
+ 		srt_add_testprogram(srt-test-live)
+ 		srt_make_application(srt-test-live)
