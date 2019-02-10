@@ -1,3 +1,4 @@
 001-multiarch-rpath.patch
+098_cmake_downgrade.patch
 099-cmake-symlink-target.patch
 100-srt-live-transmit-abort-timeout-on-connect.patch
