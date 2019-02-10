@@ -1,3 +1,14 @@
+srt (1.3.1-1~bpo7+3) wheezy-backports; urgency=medium
+
+  * Build-depend explicitly on tcl 8.5
+  * Refresh, rename, readd debian/patches/{01_cmake_downgrade => 098_cmake_downgrade.patch}
+  * Extend debian/patches/098_cmake_downgrade.patch
+  * Simplify install() in debian/patches/099-cmake-symlink-target.patch
+  * Exclude PIE from hardening
+  * Rebuild for wheezy-backports
+
+ -- Zenon Mousmoulas <zmousm@noc.grnet.gr>  Sun, 10 Feb 2019 10:22:58 +0200
+
 srt (1.3.1-1~bpo8+3) jessie-backports; urgency=medium
 
   * Add debian/patches/100-srt-live-transmit-abort-timeout-on-connect.patch
