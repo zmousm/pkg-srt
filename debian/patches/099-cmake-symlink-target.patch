@@ -2,7 +2,7 @@ diff --git a/CMakeLists.txt b/CMakeLists.txt
 index daec198..644a308 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -693,30 +693,21 @@ if ( ENABLE_CXX11 )
+@@ -692,30 +692,21 @@ if ( ENABLE_CXX11 )
  	srt_add_application(srt-live-transmit ${VIRTUAL_srtsupport})
  
  	# For backward compatibility with the old name
@@ -38,7 +38,7 @@ index daec198..644a308 100644
  		message(STATUS "BACKWARD COMPATIBLE 'stransmit': will use copying")
 -		install(PROGRAMS ${stransmit_path} DESTINATION ${CMAKE_INSTALL_BINDIR})
  	endif()
-+	install(PROGRAMS ${stransmit_path} DESTINATION ${CMAKE_INSTALL_BINDIR})
++	install(PROGRAMS stransmit DESTINATION ${CMAKE_INSTALL_BINDIR})
  
  	# srt-file-transmit must be temporarily blocked on Windows because it's not yet portable
  	if (NOT WIN32)
