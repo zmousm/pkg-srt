@@ -1,3 +1,9 @@
+srt (1.3.1-1~bpo7+4) wheezy-backports; urgency=medium
+
+  * Add Replaces/Breaks for old name of binary tool package
+
+ -- Zenon Mousmoulas <zmousm@noc.grnet.gr>  Mon, 11 Feb 2019 16:10:38 +0200
+
 srt (1.3.1-1~bpo7+3) wheezy-backports; urgency=medium
 
   * Build-depend explicitly on tcl 8.5
