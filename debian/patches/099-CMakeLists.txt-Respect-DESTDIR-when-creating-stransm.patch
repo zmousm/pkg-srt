@@ -45,7 +45,7 @@ index e742d5d..bc4565a 100644
 -		install(PROGRAMS ${stransmit_path} DESTINATION ${CMAKE_INSTALL_BINDIR})
 -	endif()
 +		COMMAND ${CMAKE_COMMAND} -E ${REPLI_COMMAND} ${srt_live_transmit_name} ${stransmit_path})
-+	install(FILES ${stransmit_path} DESTINATION ${CMAKE_INSTALL_BINDIR})
++	install(FILES stransmit DESTINATION ${CMAKE_INSTALL_BINDIR})
  
  	# srt-file-transmit must be temporarily blocked on Windows because it's not yet portable
  	if (NOT WIN32)
