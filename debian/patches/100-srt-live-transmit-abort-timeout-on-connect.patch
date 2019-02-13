@@ -1,5 +1,18 @@
+From 48af522e5925d97b01306f0191c74f1af4cd999d Mon Sep 17 00:00:00 2001
+From: Zenon Mousmoulas <zmousm@noc.grnet.gr>
+Date: Tue, 12 Feb 2019 15:47:01 +0200
+Subject: [PATCH] srt-live-transmit: add option to cancel timeout
+
+Add an option (-taoc, -timeout-abort-on-connect) to cancel the timeout
+(as set with -t) after a client is accepted. This allows for
+srt-live-transmit to run in listener mode and wait for a limited
+amount of time (timeout) for a client to connect.
+---
+ apps/srt-live-transmit.cpp | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
 diff --git a/apps/srt-live-transmit.cpp b/apps/srt-live-transmit.cpp
-index 7d320c3..6015957 100644
+index 77054ea..3e966d5 100644
 --- a/apps/srt-live-transmit.cpp
 +++ b/apps/srt-live-transmit.cpp
 @@ -177,6 +177,7 @@ int main( int argc, char** argv )
@@ -18,16 +31,21 @@ index 7d320c3..6015957 100644
      unsigned long chunk = stoul(Option("0", "c", "chunk"), 0, 0);
      if ( chunk == 0 )
      {
-@@ -469,6 +471,12 @@ int main( int argc, char** argv )
+@@ -469,6 +471,14 @@ int main( int argc, char** argv )
                                          <<  " connection"
                                          << endl;
                                  }
++#ifndef _WIN32
 +                                if (timeout_abrt_conn && timeout > 0)
 +                                {
 +                                    if (!quiet)
 +				        cerr << "TIMEOUT: cancel\n";
 +                                    alarm(0);
 +                                }
++#endif
                                  if (issource)
                                      srcConnected = true;
                                  else
+-- 
+2.11.0
+
