@@ -1,3 +1,9 @@
+srt (1.3.1-1~bpo9+6) stretch-backports; urgency=medium
+
+  * Exclude Windows from debian/patches/100-srt-live-transmit-abort-timeout-on-connect.patch
+
+ -- Zenon Mousmoulas <zmousm@noc.grnet.gr>  Thu, 14 Feb 2019 01:20:32 +0200
+
 srt (1.3.1-1~bpo9+5) stretch-backports; urgency=medium
 
   * Replace symlink patch with upstream bug fix
