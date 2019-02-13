@@ -1,3 +1,10 @@
+srt (1.3.1-1~bpo7+5) wheezy-backports; urgency=medium
+
+  * Replace symlink patch with upstream bug fix
+  * Simplify install() in debian/patches/099-CMakeLists.txt-Respect-DESTDIR-when-creating-stransm.patch
+
+ -- Zenon Mousmoulas <zmousm@noc.grnet.gr>  Wed, 13 Feb 2019 17:16:56 +0200
+
 srt (1.3.1-1~bpo7+4) wheezy-backports; urgency=medium
 
   * Add Replaces/Breaks for old name of binary tool package
