@@ -1,3 +1,12 @@
+srt (1.3.2~rc0-1~bpo9+1) stretch-backports; urgency=medium
+
+  * New upstream version
+  * Drop symlink patch, merged upstream
+  * Refresh debian/patches/001-multiarch-rpath.patch
+  * Rebuild for stretch-backports
+
+ -- Zenon Mousmoulas <zmousm@noc.grnet.gr>  Thu, 14 Feb 2019 09:51:04 +0200
+
 srt (1.3.1-1~bpo9+6) stretch-backports; urgency=medium
 
   * Exclude Windows from debian/patches/100-srt-live-transmit-abort-timeout-on-connect.patch
