@@ -1,0 +1,25 @@
+From a4b53e3718a5b5bab4df94b63ed72c3f63970478 Mon Sep 17 00:00:00 2001
+From: Zenon Mousmoulas <zmousm@noc.grnet.gr>
+Date: Wed, 13 Feb 2019 17:16:16 +0200
+Subject: [PATCH] Simplify install() for stransmit symlink
+
+---
+ CMakeLists.txt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a9ca9be..44ebca1 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -729,7 +729,7 @@ if ( ENABLE_CXX11 )
+ 		TARGET srt-live-transmit
+ 		POST_BUILD
+ 		COMMAND ${CMAKE_COMMAND} -E ${REPLI_COMMAND} ${srt_live_transmit_name} ${stransmit_path})
+-	install(FILES ${stransmit_path} DESTINATION ${CMAKE_INSTALL_BINDIR})
++	install(FILES stransmit DESTINATION ${CMAKE_INSTALL_BINDIR})
+ 
+ 	srt_add_application(srt-file-transmit ${VIRTUAL_srtsupport})
+ 
+-- 
+2.11.0
+
