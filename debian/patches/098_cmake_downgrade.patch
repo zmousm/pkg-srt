@@ -49,7 +49,18 @@ Index: srt/CMakeLists.txt
  	endif()
  endif()
  
-@@ -551,7 +551,7 @@ endif()
+@@ -526,7 +526,9 @@ endif()
+ # ---
+ 
+ 
+-target_include_directories(haicrypt_virtual PRIVATE  ${SSL_INCLUDE_DIRS})
++if (SSL_INCLUDE_DIRS)
++	target_include_directories(haicrypt_virtual PRIVATE  ${SSL_INCLUDE_DIRS})
++endif()
+ 
+ if (MICROSOFT)
+ 	set (SRT_LIBS_PRIVATE ${SRT_LIBS_PRIVATE} ws2_32.lib)
+@@ -551,7 +553,7 @@ endif()
  
  foreach(tar ${srtpack_libspec_common})
  	message(STATUS "ADDING TRANSITIVE LINK DEP to:${tar} : ${PTHREAD_LIBRARY} ${dep}")
@@ -58,7 +69,7 @@ Index: srt/CMakeLists.txt
  endforeach()
  
  
-@@ -566,7 +566,7 @@ endif()
+@@ -566,7 +568,7 @@ endif()
  
  if (srt_libspec_shared)
  if (MICROSOFT)
@@ -67,7 +78,7 @@ Index: srt/CMakeLists.txt
  endif()
  endif()
  
-@@ -660,7 +660,6 @@ macro(srt_add_program name)
+@@ -660,7 +662,6 @@ macro(srt_add_program name)
  endmacro()
  
  macro(srt_make_application name)
@@ -75,7 +86,7 @@ Index: srt/CMakeLists.txt
  
  	# This is recommended by cmake, but it doesn't work anyway.
  	# What is needed is that this below CMAKE_INSTALL_RPATH (yes, relative)
-@@ -705,7 +704,7 @@ if ( ENABLE_CXX11 )
+@@ -705,7 +706,7 @@ if ( ENABLE_CXX11 )
  	# library should be changed into a static one and made useful
  	# for users.
  	add_library(srtsupport_virtual OBJECT ${SOURCES_support})
@@ -84,7 +95,7 @@ Index: srt/CMakeLists.txt
  	set (VIRTUAL_srtsupport $<TARGET_OBJECTS:srtsupport_virtual>)
  
  	# Applications
-@@ -761,8 +760,7 @@ if ( ENABLE_CXX11 )
+@@ -761,8 +762,7 @@ if ( ENABLE_CXX11 )
  			# This program is symlinked under git-cygwin.
  			# Avoid misleading syntax error.
  			srt_add_testprogram(uriparser-test)
