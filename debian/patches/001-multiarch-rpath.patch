@@ -13,7 +13,7 @@ Forwarded: no
  set (CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/scripts")
  include(haiUtil)
  include(FindPkgConfig)
-@@ -654,12 +656,13 @@
+@@ -675,12 +677,13 @@
  		# be placed into the binrary directory anyway.
  		# XXX not sure about Mac.
  		# See this name used already in install(${TARGET_srt} LIBRARY DESTINATION...).
