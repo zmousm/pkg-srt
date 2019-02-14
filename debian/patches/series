@@ -1,3 +1,2 @@
 001-multiarch-rpath.patch
-099-CMakeLists.txt-Respect-DESTDIR-when-creating-stransm.patch
 100-srt-live-transmit-abort-timeout-on-connect.patch
