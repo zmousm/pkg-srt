@@ -19,19 +19,22 @@ Index: srt/CMakeLists.txt
  # XXX This can be potentially done in future, but there still exist
  # some dependent project using cmake 2.8 - this can't be done this way.
  #cmake_minimum_required (VERSION 3.0.2 FATAL_ERROR)
-@@ -460,9 +460,9 @@ if (srt_libspec_shared)
+@@ -478,11 +478,11 @@ if (srt_libspec_shared)
  	set_property(TARGET ${TARGET_srt}_shared PROPERTY OUTPUT_NAME ${TARGET_srt})
-     set_target_properties (${TARGET_srt}_shared PROPERTIES VERSION ${SRT_VERSION} SOVERSION ${SRT_VERSION_MAJOR})
+ 	set_target_properties (${TARGET_srt}_shared PROPERTIES VERSION ${SRT_VERSION} SOVERSION ${SRT_VERSION_MAJOR})
  	list (APPEND INSTALL_TARGETS ${TARGET_srt}_shared)
 -	target_link_libraries(${TARGET_srt}_shared PRIVATE ${SSL_LIBRARIES})
 +	target_link_libraries(${TARGET_srt}_shared LINK_PRIVATE ${SSL_LIBRARIES})
  	if (MICROSOFT)
 -		target_link_libraries(${TARGET_srt}_shared PRIVATE ws2_32.lib)
 +		target_link_libraries(${TARGET_srt}_shared LINK_PRIVATE ws2_32.lib)
+ 	elseif (MINGW)
+-		target_link_libraries(${TARGET_srt}_shared PRIVATE wsock32.lib ws2_32.lib)
++		target_link_libraries(${TARGET_srt}_shared LINK_PRIVATE wsock32.lib ws2_32.lib)
+ 	elseif (APPLE)
+ 		set_property(TARGET ${TARGET_srt}_shared PROPERTY MACOSX_RPATH ON)
  	endif()
- endif()
- 
-@@ -484,9 +484,9 @@ if (srt_libspec_static)
+@@ -506,11 +506,11 @@ if (srt_libspec_static)
  	endif()
  
  	list (APPEND INSTALL_TARGETS ${TARGET_srt}_static)
@@ -40,10 +43,13 @@ Index: srt/CMakeLists.txt
  	if (MICROSOFT)
 -		target_link_libraries(${TARGET_srt}_static PRIVATE ws2_32.lib)
 +		target_link_libraries(${TARGET_srt}_static LINK_PRIVATE ws2_32.lib)
+ 	elseif (MINGW)
+-		target_link_libraries(${TARGET_srt}_static PRIVATE wsock32 ws2_32)
++		target_link_libraries(${TARGET_srt}_static LINK_PRIVATE wsock32 ws2_32)
  	endif()
  endif()
  
-@@ -527,7 +527,7 @@ endif()
+@@ -551,7 +551,7 @@ endif()
  
  foreach(tar ${srtpack_libspec_common})
  	message(STATUS "ADDING TRANSITIVE LINK DEP to:${tar} : ${PTHREAD_LIBRARY} ${dep}")
@@ -52,16 +58,16 @@ Index: srt/CMakeLists.txt
  endforeach()
  
  
-@@ -542,7 +542,7 @@ endif()
+@@ -566,7 +566,7 @@ endif()
  
  if (srt_libspec_shared)
  if (MICROSOFT)
--    target_link_libraries(${TARGET_srt}_shared PUBLIC Ws2_32.lib)
-+    target_link_libraries(${TARGET_srt}_shared LINK_PUBLIC Ws2_32.lib)
+-	target_link_libraries(${TARGET_srt}_shared PUBLIC Ws2_32.lib)
++	target_link_libraries(${TARGET_srt}_shared LINK_PUBLIC Ws2_32.lib)
  endif()
  endif()
  
-@@ -639,7 +639,6 @@ macro(srt_add_program name)
+@@ -660,7 +660,6 @@ macro(srt_add_program name)
  endmacro()
  
  macro(srt_make_application name)
@@ -69,7 +75,7 @@ Index: srt/CMakeLists.txt
  
  	# This is recommended by cmake, but it doesn't work anyway.
  	# What is needed is that this below CMAKE_INSTALL_RPATH (yes, relative)
-@@ -685,7 +684,7 @@ if ( ENABLE_CXX11 )
+@@ -705,7 +704,7 @@ if ( ENABLE_CXX11 )
  	# library should be changed into a static one and made useful
  	# for users.
  	add_library(srtsupport_virtual OBJECT ${SOURCES_support})
@@ -78,13 +84,13 @@ Index: srt/CMakeLists.txt
  	set (VIRTUAL_srtsupport $<TARGET_OBJECTS:srtsupport_virtual>)
  
  	# Applications
-@@ -743,8 +742,7 @@ if ( ENABLE_CXX11 )
- 
- 		srt_add_testprogram(utility-test)
- 		srt_add_testprogram(uriparser-test)
--		target_compile_options(uriparser-test PRIVATE -DTEST)
--		target_compile_options(uriparser-test PRIVATE ${CFLAGS_CXX_STANDARD})
-+		set_target_properties(uriparser-test PROPERTIES COMPILE_FLAGS "-DTEST" "${CFLAGS_CXX_STANDARD}")
+@@ -761,8 +760,7 @@ if ( ENABLE_CXX11 )
+ 			# This program is symlinked under git-cygwin.
+ 			# Avoid misleading syntax error.
+ 			srt_add_testprogram(uriparser-test)
+-			target_compile_options(uriparser-test PRIVATE -DTEST)
+-			target_compile_options(uriparser-test PRIVATE ${CFLAGS_CXX_STANDARD})
++			set_target_properties(uriparser-test PROPERTIES COMPILE_FLAGS "-DTEST" "${CFLAGS_CXX_STANDARD}")
+ 		endif()
  		
  		srt_add_testprogram(srt-test-live)
- 		srt_make_application(srt-test-live)
